@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-from glide.science.model import zoennchen_model, default_geom, sc2viewgeom
-from glide.science.forward import glide_orbit
+from glide.science.model import zoennchen_model, default_vol
+from glide.science.orbit import glide_orbit, sc2viewgeom
 from glide.validation.photon_events import NoisyImage, gen_Lya_events, gen_OOB_events, gen_IPH_events
 from glide.validation.gci_specs import GCI_specs
 from glide.validation.noise_module import BackgroundNoise
@@ -14,7 +14,7 @@ import torch as t
 import numpy as np
 import matplotlib.pyplot as plt
 
-vol = default_geom()
+vol = default_vol()
 
 # phantom = t.tensor(zoennchen_model(vol), device='cuda', dtype=t.float32)
 phantom = zoennchen_model(vol)
@@ -34,7 +34,6 @@ from glide.validation.imaging_mode import imaging_mode
 cam_mode = imaging_mode('nadir', None, cam_id, fltr='LyaN', activation='lot')
 t_int = cam_mode.fps * cam_mode.t_int*60 * cam_mode.t_frame
 
-# cam_specs = GCI_specs(cam_id, cam_mode.fltr, 'baseline', cam_mode.lifetime, 'quiet')
 cam_specs = GCI_specs(cam_mode)
 
 dark_noise = BackgroundNoise(
@@ -44,12 +43,11 @@ dark_noise = BackgroundNoise(
     events_name='mean_dark_counts'
 )
 rad_noise = BackgroundNoise(
-    cam_specs.rad_flux,
+    cam_specs.APS_radiation,
     cam_mode.t_frame,
     cam_specs.pixel_size,
     events_name='mean_rad_counts'
 )
-
 bkgd_noise = dark_noise + rad_noise
 
 # ----- background noise -----
@@ -85,7 +83,7 @@ mean_lya_outer.add(mean_lya_inner)
 
 image_generator = NoisyImage(
     mean_photon_events,
-    bkgd_noise, cam_specs.gain, t_int,
+    bkgd_noise, cam_specs, cam_mode,
     mask=np.ones(mean_photon_events.events.shape).astype(bool)
 )
 image_generator.makeNoisyImages(1)
