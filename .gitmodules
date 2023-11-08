@@ -1,0 +1,3 @@
+[submodule "glide-sdc"]
+	path = glide-sdc
+	url = git@gitlab.engr.illinois.edu:ari-nasa/glide-sdc
