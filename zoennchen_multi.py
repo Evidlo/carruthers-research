@@ -6,16 +6,18 @@ import torch as t
 import torch_optimizer as optim
 import numpy as np
 import tomosipo as ts
+from pathlib import Path
 
-from glide.common_components.view_geometry import gen_mission, circular_orbit, CameraWFI
+from glide.common_components.view_geometry import gen_mission, circular_orbit, carruthers_orbit, CameraWFI, CameraNFI
 from glide.common_components.cam import CamMode, CamSpec, nadir_wfi_mode, nadir_nfi_mode
 from glide.science.orbit import viewgeom2ts
-from glide.science.model import SnowmanModel, zoennchen, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart
+from glide.science.model import SnowmanModel, ZoennchenModel, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart, CubesModel
 from glide.science.forward import Forwards
-from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative
+from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative, sphharmplot
 from glide.science.recon import nag_ls, sirt, gd
 from glide.science.recon.nag_ls import nag_ls_coeff, nag_ls_clip
 from glide.science.common import cart2sph
+from glide.science.recon.loss import *
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:500"
@@ -23,131 +25,112 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:500"
 
 # ----- Density -----
 
-s = 100
+s = 50
 vol = default_vol(shape=s, size=50)
 
 # ----- Mission Setup -----
 # %% setup
 
-orbit = 'carruthers'
-mo = 6
-view_geoms = gen_mission(
-    num_obs=20, start='2025-07-01',
-    cams=[CameraWFI()],
-    duration=30*mo,
-)
-
+mo = 3
+num_obs = 120
+# nfi = CameraWFI()
+# nfi.cam_spec.fov = 3.6
+cams=[
+    CameraNFI(),
+    CameraWFI(),
+    # nfi
+]
 # orbit = 'circular'
-# view_geoms = circular_orbit(num_obs=60, radius=280, revolutions=0.5, cam_mode=cm, cam_spec=cs)
-# cmodes = [cm] * len(view_geoms)
-# cspecs = [cs] * len(view_geoms)
+# view_geoms = gen_mission(
+#     orbit=circular_orbit,
+#     num_obs=num_obs, cams=cams,
+#     radius=280, revolutions=0.5
+# )
+orbit = 'carruthers'
+view_geoms = gen_mission(
+    orbit=carruthers_orbit,
+    num_obs=num_obs, cams=cams,
+    start='2025-07-01', duration=30*mo,
+)
+# view_geoms = [view_geoms[0] + view_geoms[1]]
 
 
 # ----- Forward Model -----
 # %% forward
 
-# model_truth = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
-# coeffs_truth = t.zeros(model_truth.coeffs_shape, device='cuda')
-# coeffs_truth[3, 0] = 1
-# density_truth = model_truth(coeffs_truth)
-density_truth = zoennchen(vol, device='cuda')
-# density_truth = AxisAlignmentModel(vol, device='cuda')()
-np.random.seed(0)
-f_truths = Forwards(view_geoms, vol, use_noise=True, use_grad=False, use_albedo=False, use_aniso=False)
-f_truth = f_truths[0]
-y_truths = [f(density_truth) for f in f_truths]
-y_truth = y_truths[0]
-
-fs = Forwards(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, use_aniso=False)
-f = fs[0]
-
-import ipdb
-ipdb.set_trace()
-
-
-# ----- Loss Functions and Regularizers -----
-square_loss = lambda f, y, d: t.mean((y - f(d))**2)
-# r_weight = 1 / cart2sph(vol2cart(vol))[:, :, :, 0]**2
-# square_loss_r = lambda f, y, d: t.mean(r_weight * (y - f(d))**2)
-def square_rel_loss(f, y, d):
-    obs = f(d)
-    rel_err = (y - obs) / obs
-    rel_err = rel_err.nan_to_num()
-    return t.mean(rel_err**2)
-cheater_loss = lambda f, y, d: t.mean((d - density_truth)**2)
-neg_reg=lambda f, y, d: t.mean(t.abs(d.clip(max=0)))
-# reg_fn=lambda f, y, d: 10 * t.mean((t.abs(d) - d)**2)
-# reg_fn=lambda f, y, d: t.mean((d - density_truth)**2)
-
-# %% recon
-
+ys_list = {}
 coeffs = {}
 models = {}
 losses = {}
 
+# models['Truth'] = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
+# coeffs['Truth'] = t.zeros(models['Truth'].coeffs_shape, device='cuda')
+# coeffs['Truth'][3, 0] = np.random.random(models['Truth'].coeffs_shape)
+# density_truth = models['Truth'](coeffs['Truth'])
+print('1 model setup')
+density_truth = ZoennchenModel(vol, device='cuda')()
+# density_truth = CubesModel(vol, device='cuda')()
+# density_truth = AxisAlignmentModel(vol, device='cuda')()
+# density_truth = SnowmanModel(vol, device='cuda')()
+print('2 truth forward setup')
+np.random.seed(0)
+f_truths = Forwards(view_geoms, vol, use_noise=True, use_grad=False, use_albedo=False, use_aniso=False)
+print('3 noise application')
+f_truth = f_truths[0]
+y_truths = [f(density_truth) for f in f_truths]
+y_truth = y_truths[0]
+
+print('4 recon forward setup')
+fs = Forwards(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, use_aniso=False)
+f = fs[0]
+
+# %% recon
+
+ys_list['Truth'] = [(f_truth.view_geoms[0].sensor.camID, y_truth) for f_truth, y_truth in zip(f_truths, y_truths)]
 coeffs['Truth'] = density_truth
 models['Truth'] = FullyDenseModel(vol, device='cuda')
 losses['Truth'] = None
 
-# models['sph'] = FullyDenseModel(vol, device='cuda')
+print('5 model setup')
 name = 'sph'
 models[name] = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
-_, losses[name], coeffs[name] = gd(
+print('6 gradient')
+# grid_cart = vol2cart(vol)
+# grid_sph = cart2sph(grid_cart)
+# projection_masks = [
+#     t.ones((num_obs, 1024, 1024), device='cuda'),
+#     xxx
+# ]
+_, losses[name], coeffs[name], ys_list[name] = gd(
     fs, y_truths,
     model=models[name],
-    num_iterations=2000,
+    num_iterations=1000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
     loss_fn=square_loss,
+    # projection_masks=projection_masks,
     reg_fn=neg_reg,
-    loss_history=True
+    reg_lam=1e14,
+    loss_history=True,
 )
 
-# models['adj_dense'] = FullyDenseModel(vol, device='cuda')
-# coeffs['adj_dense'] = models['adj_dense'].T(f.T(y_truth))
-# scaling = models['adj_dense'].T(f.T(t.ones_like(y_truth)))
-# coeffs['adj_dense'] = coeffs['adj_dense'] / scaling.where(scaling.data != 0, t.tensor(1, device='cuda'))
-
-# models['gd_rel'] = SphHarmBasisModel(vol, num_shells=20, max_l=3, device='cuda')
-# _, losses['gd_rel'], coeffs['gd_rel'] = gd(
-#     f, y_truth, model=models['gd_rel'],
-#     num_iterations=600,
+# name = 'dense'
+# models[name] = FullyDenseModel(vol, device='cuda')
+# _, losses[name], coeffs[name] = gd(
+#     fs, y_truths,
+#     model=models[name],
+#     num_iterations=300,
 #     lr=1e2,
-#     optimizer=optim.QHAdam,
-#     loss_fn=square_rel_loss,
+#     optimizer=(optimizer:=optim.Yogi),
+#     loss_fn=square_loss,
 #     reg_fn=neg_reg,
+#     reg_lam=1e10,
 #     loss_history=True
 # )
 
-# models['sph'] = SphHarmBasisModel(vol, num_shells=5, max_l=2, device='cuda')
-# coeffs['sph']: nag_ls_clip(
-#     f, y_truth, model=models['sph'], num_iterations=200,
-#     min_constraint=0,
-#     progress_bar=True,
-#     l2_regularization=1e0
-# )
-
-# models['nag'] = FullyDenseModel(vol, device='cuda')
-# coeffs['nag']: nag_ls(
-#     f, y_truth, num_iterations=200,
-#     min_constraint=0,
-#     progress_bar=True,
-#     l2_regularization=0
-# )
-
-# models['sirt'] = FullyDenseModel(vol, device='cuda')
-# coeffs['sirt']: sirt(
-#     f, y_truth, num_iterations=200,
-#     min_constraint=0,
-#     progress_bar=True,
-# )
-
-y_list = {}
-for title, m in models.items():
-    y_list[title] = f(m(coeffs[title]))
-
 # ---------- Plotting ----------
 # %% plot
+
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -168,14 +151,16 @@ for title, coeff in coeffs.items():
     err = density2xr(err, vol)
     errors[title] = err
 
-    rel_errors[title] = err / density_truth.where(density_truth.data != 0, 1) * 100
+    rel_errors[title] = err / density_truth.where(density_truth.data != 0, 0) * 100
 
 # --- Measurements ---
 fig_meas = []
-for title, y in y_list.items():
-    fig_meas.append(
-        Figure(f'{title} Meas.', Img(y.detach().cpu().numpy(), animation=True, height=300)),
-    )
+for title, ys in ys_list.items():
+    for chan, y in ys:
+        fig_meas.append(Figure(
+            f'{title} Meas. {chan}',
+            Img(y.detach().cpu().numpy()[:, ::2, ::2], animation=True, height=300)),
+        )
 
 # --- 3D Densities ---
 
@@ -190,7 +175,7 @@ for title, coeff in coeffs.items():
 
 # norm = colors.CenteredNorm(halfrange=50)
 norm = colors.Normalize(vmin=-50, vmax=50)
-# boundaries = np.linspace(0, 50, 6)
+boundaries = np.linspace(-50, 50, 6)
 # norm = colors.BoundaryNorm(boundaries, len(boundaries))
 # cmap = plt.get_cmap('Greens')
 cmap = plt.get_cmap('seismic')
@@ -205,24 +190,24 @@ for title, rel_err in rel_errors.items():
         fig_rel_err.append(Img(None, width=300))
         continue
 
-    fig = plt.figure(figsize=(5, 12))
+    fig = plt.figure(figsize=(15, 5))
     plt.suptitle(f'H-Density Percent Error')
-    a = plt.subplot(3, 1, 1, aspect='equal')
+    a = plt.subplot(1, 3, 1, aspect='equal')
     xr.plot.imshow(rel_err.sel(z=0, method='nearest'), norm=norm, cmap=cmap)
     a.set_title(None)
     a.set_aspect('equal')
-    a = plt.subplot(3, 1, 2, aspect='equal')
+    a = plt.subplot(1, 3, 2, aspect='equal')
     xr.plot.imshow(rel_err.sel(y=0, method='nearest'), norm=norm, cmap=cmap)
     a.set_title(None)
     a.set_aspect('equal')
-    a = plt.subplot(3, 1, 3, aspect='equal')
+    a = plt.subplot(1, 3, 3, aspect='equal')
     xr.plot.imshow(rel_err.sel(x=0, method='nearest'), norm=norm, cmap=cmap)
     a.set_title(None)
     a.set_aspect('equal')
     # c = plt.colorbar()
     # c.ax.set_ylabel("Percent")
     plt.tight_layout(pad=1)
-    fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(fig, width=300)))
+    fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(fig, width=800)))
 
     # import plotly.express as px
     # import plotly
@@ -252,6 +237,7 @@ for title, loss in losses.items():
         continue
 
     fig = plt.figure(figsize=(3, 3))
+    plt.title(f"Loss={loss[-1]:.3e}")
     plt.semilogy(loss)
     plt.tight_layout()
     plt.grid(True)
@@ -260,29 +246,28 @@ for title, loss in losses.items():
         Figure(f'{title} Loss', Img(fig, height=300))
     )
 
-# --- Sph. Harm ---
-fig_sphharm = []
-for title, loss in losses.items():
-    if title == 'Truth':
-        fig_loss.append(Img(None, width=300))
-        continue
+fig = plt.figure('sphcoeffs', figsize=((6, 4)))
+sphharmplot(coeffs['sph'], models['sph'])
+fig.tight_layout()
+fig_sphcoeffs = Figure('Sph Coeffs', Img(fig, width=300))
 
-    fig = plt.figure(figsize=(3, 3))
-    plt.semilogy(loss)
-    plt.tight_layout()
-    plt.grid(True)
-
-    fig_loss.append(
-        Figure(f'{title} Loss', Img(fig, height=300))
-    )
-
+settings = HTML('<br>'.join([
+    f'{f.use_noise=}',
+    f'{num_obs=}',
+    f'channels={cams}',
+    f'density_shape (voxels)={vol.shape}',
+    f'density_size (Re)={vol.size}',
+    f'optimizer={optimizer.__name__}',
+]))
 
 noisy_str = 'noisy' if f_truth.use_noise else 'noiseless'
-path = f'/srv/www/display/{mo}mo_{noisy_str}_{len(y)}obs_{optimizer.__name__}.html'
-Page(
+chans = ''.join(c.camID for c in cams).lower()
+display_dir = Path('/srv/www/display')
+path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{chans}.html'
+p = Page(
     [
         [
-            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms[0]), rotate=0).svg_str)),
+            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms[0]), rotate=0)._repr_html_())),
         ],
         fig_meas,
         fig_density,
@@ -290,17 +275,19 @@ Page(
         # fig_abs_err,
         fig_recon_slice,
         fig_loss,
-        [
-            HTML('<br>'.join([
-                f'{f.use_noise=}',
-                f'{len(y)=}',
-                f'optimizer={optimizer.__name__}',
-            ]))
-        ]
+        fig_sphcoeffs,
+        [settings]
     ],
     head_extra=f"<script>{img_sync_js}</script>"
-).save(path)
-# ).save('/srv/www/display.html')
+)
+p.save(path)
 print(f"Wrote to {path}")
+
+# archive error plot and all code
+Page([
+    fig_rel_err,
+    settings,
+    Code(open('zoennchen_multi.py').read())
+]).save(display_dir / 'archive' / f'{datetime.now().isoformat()}.html')
 
 plt.close('all')
