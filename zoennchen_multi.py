@@ -12,7 +12,7 @@ from glide.common_components.view_geometry import gen_mission, circular_orbit, c
 from glide.common_components.cam import CamMode, CamSpec, nadir_wfi_mode, nadir_nfi_mode
 from glide.science.orbit import viewgeom2ts
 from glide.science.model import SnowmanModel, ZoennchenModel, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart, CubesModel
-from glide.science.forward import Forwards
+from glide.science.forward import Forward, projection_mask, volume_mask
 from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative, sphharmplot
 from glide.science.recon import nag_ls, sirt, gd
 from glide.science.recon.nag_ls import nag_ls_coeff, nag_ls_clip
@@ -32,13 +32,16 @@ vol = default_vol(shape=s, size=50)
 # %% setup
 
 mo = 3
-num_obs = 120
-# nfi = CameraWFI()
-# nfi.cam_spec.fov = 3.6
+num_obs = 20
+cam_mode = nadir_wfi_mode()
+cam_spec = CamSpec(cam_mode)
+cam_spec.fov = 3.6
+nfi = CameraWFI(cam_mode, cam_spec)
+nfi.camID = 'NFI'
 cams=[
-    CameraNFI(),
+    # CameraNFI(),
+    nfi,
     CameraWFI(),
-    # nfi
 ]
 # orbit = 'circular'
 # view_geoms = gen_mission(
@@ -50,7 +53,14 @@ orbit = 'carruthers'
 view_geoms = gen_mission(
     orbit=carruthers_orbit,
     num_obs=num_obs, cams=cams,
-    start='2025-07-01', duration=30*mo,
+    duration=30*mo,
+    # start='2025-07-01', duration=30*mo,
+    # start='2025-04-01', duration=30*mo,
+    # start='2025-05-15'
+    # start=(start:='spring'),
+    # start=(start:='summer'),
+    # start=(start:='fall'),
+    start=(start:='winter'),
 )
 # view_geoms = [view_geoms[0] + view_geoms[1]]
 
@@ -58,7 +68,7 @@ view_geoms = gen_mission(
 # ----- Forward Model -----
 # %% forward
 
-ys_list = {}
+ys = {}
 coeffs = {}
 models = {}
 losses = {}
@@ -74,19 +84,18 @@ density_truth = ZoennchenModel(vol, device='cuda')()
 # density_truth = SnowmanModel(vol, device='cuda')()
 print('2 truth forward setup')
 np.random.seed(0)
-f_truths = Forwards(view_geoms, vol, use_noise=True, use_grad=False, use_albedo=False, use_aniso=False)
+f_truth = Forward(view_geoms, vol, use_noise=True, use_grad=False, use_albedo=False, use_aniso=False)
 print('3 noise application')
-f_truth = f_truths[0]
-y_truths = [f(density_truth) for f in f_truths]
-y_truth = y_truths[0]
+y_truth = f_truth(density_truth)
 
 print('4 recon forward setup')
-fs = Forwards(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, use_aniso=False)
-f = fs[0]
+f = Forward(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, use_aniso=False)
 
 # %% recon
 
-ys_list['Truth'] = [(f_truth.view_geoms[0].sensor.camID, y_truth) for f_truth, y_truth in zip(f_truths, y_truths)]
+desc = '_torus'
+
+ys['Truth'] = y_truth
 coeffs['Truth'] = density_truth
 models['Truth'] = FullyDenseModel(vol, device='cuda')
 losses['Truth'] = None
@@ -97,27 +106,25 @@ models[name] = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
 print('6 gradient')
 # grid_cart = vol2cart(vol)
 # grid_sph = cart2sph(grid_cart)
-# projection_masks = [
-#     t.ones((num_obs, 1024, 1024), device='cuda'),
-#     xxx
-# ]
-_, losses[name], coeffs[name], ys_list[name] = gd(
-    fs, y_truths,
+_, losses[name], coeffs[name], ys[name] = gd(
+    f, y_truth,
     model=models[name],
     num_iterations=1000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
-    loss_fn=square_loss,
-    # projection_masks=projection_masks,
+    # loss_fn=square_loss,
     reg_fn=neg_reg,
-    reg_lam=1e14,
+    # loss_fn=square_loss_mask_gen(projection_mask(view_geoms, r=20)),
+    loss_fn=cheater_loss_gen(density_truth),
+    # reg_fn=neg_reg_mask_gen(volume_mask(vol, r=20)),
+    # reg_lam=1e15,
     loss_history=True,
 )
 
 # name = 'dense'
 # models[name] = FullyDenseModel(vol, device='cuda')
 # _, losses[name], coeffs[name] = gd(
-#     fs, y_truths,
+#     f, y_truth,
 #     model=models[name],
 #     num_iterations=300,
 #     lr=1e2,
@@ -155,12 +162,11 @@ for title, coeff in coeffs.items():
 
 # --- Measurements ---
 fig_meas = []
-for title, ys in ys_list.items():
-    for chan, y in ys:
-        fig_meas.append(Figure(
-            f'{title} Meas. {chan}',
-            Img(y.detach().cpu().numpy()[:, ::2, ::2], animation=True, height=300)),
-        )
+for title, y in ys.items():
+    fig_meas.append(Figure(
+        f'{title} Meas.',
+        Img(y.detach().cpu().numpy()[:, ::2, ::2], animation=True, height=300)),
+    )
 
 # --- 3D Densities ---
 
@@ -175,6 +181,7 @@ for title, coeff in coeffs.items():
 
 # norm = colors.CenteredNorm(halfrange=50)
 norm = colors.Normalize(vmin=-50, vmax=50)
+# norm = colors.Normalize(vmin=-25, vmax=25)
 boundaries = np.linspace(-50, 50, 6)
 # norm = colors.BoundaryNorm(boundaries, len(boundaries))
 # cmap = plt.get_cmap('Greens')
@@ -259,15 +266,16 @@ settings = HTML('<br>'.join([
     f'density_size (Re)={vol.size}',
     f'optimizer={optimizer.__name__}',
 ]))
+page_code = Code(open('zoennchen_multi.py').read())
 
 noisy_str = 'noisy' if f_truth.use_noise else 'noiseless'
-chans = ''.join(c.camID for c in cams).lower()
+# chans = ''.join(c.camID for c in cams).lower()
 display_dir = Path('/srv/www/display')
-path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{chans}.html'
+path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{start}{desc}.html'
 p = Page(
     [
         [
-            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms[0]), rotate=0)._repr_html_())),
+            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms))._repr_html_())),
         ],
         fig_meas,
         fig_density,
@@ -276,18 +284,21 @@ p = Page(
         fig_recon_slice,
         fig_loss,
         fig_sphcoeffs,
-        [settings]
+        settings,
+        page_code
     ],
     head_extra=f"<script>{img_sync_js}</script>"
 )
 p.save(path)
 print(f"Wrote to {path}")
 
+from datetime import datetime
 # archive error plot and all code
 Page([
     fig_rel_err,
+    fig_sphcoeffs,
     settings,
-    Code(open('zoennchen_multi.py').read())
+    page_code,
 ]).save(display_dir / 'archive' / f'{datetime.now().isoformat()}.html')
 
 plt.close('all')
