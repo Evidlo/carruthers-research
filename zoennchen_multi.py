@@ -11,9 +11,9 @@ from pathlib import Path
 from glide.common_components.view_geometry import gen_mission, circular_orbit, carruthers_orbit, CameraWFI, CameraNFI
 from glide.common_components.cam import CamMode, CamSpec, nadir_wfi_mode, nadir_nfi_mode
 from glide.science.orbit import viewgeom2ts
-from glide.science.model import SnowmanModel, ZoennchenModel, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart, CubesModel
+from glide.science.model import SnowmanModel, ZoennchenModel, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart, CubesModel, PratikModel
 from glide.science.forward import Forward, projection_mask, volume_mask
-from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative, sphharmplot
+from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative, sphharmplot, carderr
 from glide.science.recon import nag_ls, sirt, gd
 from glide.science.recon.nag_ls import nag_ls_coeff, nag_ls_clip
 from glide.science.common import cart2sph
@@ -32,9 +32,9 @@ vol = default_vol(shape=s, size=50)
 # %% setup
 
 mo = 3
-num_obs = 20
+num_obs = 50
 cam_mode = nadir_wfi_mode()
-cam_spec = CamSpec(cam_mode)
+cam_spec = CamSpec(cam_mode, true_flat=False)
 cam_spec.fov = 3.6
 nfi = CameraWFI(cam_mode, cam_spec)
 nfi.camID = 'NFI'
@@ -57,10 +57,10 @@ view_geoms = gen_mission(
     # start='2025-07-01', duration=30*mo,
     # start='2025-04-01', duration=30*mo,
     # start='2025-05-15'
-    # start=(start:='spring'),
+    start=(start:='spring'),
     # start=(start:='summer'),
     # start=(start:='fall'),
-    start=(start:='winter'),
+    # start=(start:='winter'),
 )
 # view_geoms = [view_geoms[0] + view_geoms[1]]
 
@@ -79,6 +79,7 @@ losses = {}
 # density_truth = models['Truth'](coeffs['Truth'])
 print('1 model setup')
 density_truth = ZoennchenModel(vol, device='cuda')()
+# density_truth = PratikModel(vol, date=start, path=None, device='cuda', rinner=3)()
 # density_truth = CubesModel(vol, device='cuda')()
 # density_truth = AxisAlignmentModel(vol, device='cuda')()
 # density_truth = SnowmanModel(vol, device='cuda')()
@@ -93,7 +94,11 @@ f = Forward(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, u
 
 # %% recon
 
-desc = '_torus'
+# desc = '_torus'
+# desc = '_xaligned'
+# desc = '_pratik'
+# desc = '_deleteme'
+desc = ''
 
 ys['Truth'] = y_truth
 coeffs['Truth'] = density_truth
@@ -102,7 +107,7 @@ losses['Truth'] = None
 
 print('5 model setup')
 name = 'sph'
-models[name] = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
+models[name] = SphHarmBasisModel(vol, num_shells=20, max_l=2, axis=(1, 0, 0), device='cuda')
 print('6 gradient')
 # grid_cart = vol2cart(vol)
 # grid_sph = cart2sph(grid_cart)
@@ -112,12 +117,12 @@ _, losses[name], coeffs[name], ys[name] = gd(
     num_iterations=1000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
-    # loss_fn=square_loss,
+    loss_fn=square_loss,
     reg_fn=neg_reg,
     # loss_fn=square_loss_mask_gen(projection_mask(view_geoms, r=20)),
-    loss_fn=cheater_loss_gen(density_truth),
+    # loss_fn=cheater_loss_gen(density_truth),
     # reg_fn=neg_reg_mask_gen(volume_mask(vol, r=20)),
-    # reg_lam=1e15,
+    reg_lam=1e14,
     loss_history=True,
 )
 
@@ -197,35 +202,27 @@ for title, rel_err in rel_errors.items():
         fig_rel_err.append(Img(None, width=300))
         continue
 
-    fig = plt.figure(figsize=(15, 5))
-    plt.suptitle(f'H-Density Percent Error')
-    a = plt.subplot(1, 3, 1, aspect='equal')
-    xr.plot.imshow(rel_err.sel(z=0, method='nearest'), norm=norm, cmap=cmap)
-    a.set_title(None)
-    a.set_aspect('equal')
-    a = plt.subplot(1, 3, 2, aspect='equal')
-    xr.plot.imshow(rel_err.sel(y=0, method='nearest'), norm=norm, cmap=cmap)
-    a.set_title(None)
-    a.set_aspect('equal')
-    a = plt.subplot(1, 3, 3, aspect='equal')
-    xr.plot.imshow(rel_err.sel(x=0, method='nearest'), norm=norm, cmap=cmap)
-    a.set_title(None)
-    a.set_aspect('equal')
-    # c = plt.colorbar()
-    # c.ax.set_ylabel("Percent")
-    plt.tight_layout(pad=1)
-    fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(fig, width=800)))
+    # fig = plt.figure(figsize=(15, 5))
+    # plt.suptitle(f'H-Density Percent Error')
+    # a = plt.subplot(1, 3, 1, aspect='equal')
+    # xr.plot.imshow(rel_err.sel(z=0, method='nearest'), norm=norm, cmap=cmap)
+    # a.set_title(None)
+    # a.set_aspect('equal')
+    # a = plt.subplot(1, 3, 2, aspect='equal')
+    # xr.plot.imshow(rel_err.sel(y=0, method='nearest'), norm=norm, cmap=cmap)
+    # a.set_title(None)
+    # a.set_aspect('equal')
+    # a = plt.subplot(1, 3, 3, aspect='equal')
+    # xr.plot.imshow(rel_err.sel(x=0, method='nearest'), norm=norm, cmap=cmap)
+    # a.set_title(None)
+    # a.set_aspect('equal')
+    # plt.tight_layout(pad=1)
+    # fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(fig, width=800)))
 
-    # import plotly.express as px
-    # import plotly
-
-    # fig_rel_err.append(HTML(
-    #     plotly.io.to_html(
-    #         px.imshow(rel_err.sel(x=0, method='nearest')),
-    #         include_plotlyjs='cdn',
-    #         full_html=False
-    #     ))
-    # )
+    fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(
+        carderr(recon, density_truth, vol),
+        width=800
+    )))
 
 # --- Recon Slice ---
 
@@ -253,10 +250,9 @@ for title, loss in losses.items():
         Figure(f'{title} Loss', Img(fig, height=300))
     )
 
-fig = plt.figure('sphcoeffs', figsize=((6, 4)))
-sphharmplot(coeffs['sph'], models['sph'])
-fig.tight_layout()
-fig_sphcoeffs = Figure('Sph Coeffs', Img(fig, width=300))
+fig, _ = plt.subplots(figsize=((6, 4)))
+sphplot = sphharmplot(coeffs['sph'], models['sph'], figure=fig)
+fig_sphcoeffs = Figure('Sph Coeffs', Img(sphplot, width=300))
 
 settings = HTML('<br>'.join([
     f'{f.use_noise=}',
