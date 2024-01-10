@@ -13,7 +13,7 @@ from glide.common_components.cam import CamMode, CamSpec, nadir_wfi_mode, nadir_
 from glide.science.orbit import viewgeom2ts
 from glide.science.model import SnowmanModel, ZoennchenModel, FullyDenseModel, SphHarmBasisModel, default_vol, density2xr, AxisAlignmentModel, vol2cart, CubesModel, PratikModel
 from glide.science.forward import Forward, projection_mask, volume_mask
-from glide.science.plotting import save_gif, preview3d, orbit_svg, imshow, color_negative, sphharmplot, carderr
+from glide.science.plotting import *
 from glide.science.recon import nag_ls, sirt, gd
 from glide.science.recon.nag_ls import nag_ls_coeff, nag_ls_clip
 from glide.science.common import cart2sph
@@ -25,7 +25,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:500"
 
 # ----- Density -----
 
-s = 50
+s = 100
 vol = default_vol(shape=s, size=50)
 
 # ----- Mission Setup -----
@@ -57,10 +57,11 @@ view_geoms = gen_mission(
     # start='2025-07-01', duration=30*mo,
     # start='2025-04-01', duration=30*mo,
     # start='2025-05-15'
-    start=(start:='spring'),
+    # start=(start:='spring'),
     # start=(start:='summer'),
     # start=(start:='fall'),
-    # start=(start:='winter'),
+    start=(start:='winter'),
+    # start=(start:=os.environ['start'])
 )
 # view_geoms = [view_geoms[0] + view_geoms[1]]
 
@@ -78,8 +79,8 @@ losses = {}
 # coeffs['Truth'][3, 0] = np.random.random(models['Truth'].coeffs_shape)
 # density_truth = models['Truth'](coeffs['Truth'])
 print('1 model setup')
-density_truth = ZoennchenModel(vol, device='cuda')()
-# density_truth = PratikModel(vol, date=start, path=None, device='cuda', rinner=3)()
+# density_truth = ZoennchenModel(vol, device='cuda')()
+density_truth = PratikModel(vol, date=start, path=None, device='cuda', rinner=3, method='cubic')()
 # density_truth = CubesModel(vol, device='cuda')()
 # density_truth = AxisAlignmentModel(vol, device='cuda')()
 # density_truth = SnowmanModel(vol, device='cuda')()
@@ -94,11 +95,14 @@ f = Forward(view_geoms, vol, use_noise=False, use_grad=True, use_albedo=False, u
 
 # %% recon
 
+# desc = '2'
+# desc = '_s20'
 # desc = '_torus'
 # desc = '_xaligned'
-# desc = '_pratik'
+desc = '_pratik'
+# desc = '_pratik_lin'
 # desc = '_deleteme'
-desc = ''
+# desc = '_lin'
 
 ys['Truth'] = y_truth
 coeffs['Truth'] = density_truth
@@ -107,14 +111,17 @@ losses['Truth'] = None
 
 print('5 model setup')
 name = 'sph'
-models[name] = SphHarmBasisModel(vol, num_shells=20, max_l=2, axis=(1, 0, 0), device='cuda')
+models[name] = SphHarmBasisModel(
+    vol, num_shells=(num_shells:=10), max_l=(max_l:=2),
+    axis=(1, 0, 0), degree=2, spacing='log', device='cuda'
+)
 print('6 gradient')
 # grid_cart = vol2cart(vol)
 # grid_sph = cart2sph(grid_cart)
-_, losses[name], coeffs[name], ys[name] = gd(
+_, losses[name], coeffs[name], ys[name], sloss = gd(
     f, y_truth,
     model=models[name],
-    num_iterations=1000,
+    num_iterations=6000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
     loss_fn=square_loss,
@@ -124,21 +131,8 @@ _, losses[name], coeffs[name], ys[name] = gd(
     # reg_fn=neg_reg_mask_gen(volume_mask(vol, r=20)),
     reg_lam=1e14,
     loss_history=True,
+    aux_loss_fn=max_req_err_gen(density_truth),
 )
-
-# name = 'dense'
-# models[name] = FullyDenseModel(vol, device='cuda')
-# _, losses[name], coeffs[name] = gd(
-#     f, y_truth,
-#     model=models[name],
-#     num_iterations=300,
-#     lr=1e2,
-#     optimizer=(optimizer:=optim.Yogi),
-#     loss_fn=square_loss,
-#     reg_fn=neg_reg,
-#     reg_lam=1e10,
-#     loss_history=True
-# )
 
 # ---------- Plotting ----------
 # %% plot
@@ -199,28 +193,12 @@ cmap.set_under(color='black')
 fig_rel_err = []
 for title, rel_err in rel_errors.items():
     if title == 'Truth':
-        fig_rel_err.append(Img(None, width=300))
+    #     fig_rel_err.append(Img(None, width=300))
         continue
 
-    # fig = plt.figure(figsize=(15, 5))
-    # plt.suptitle(f'H-Density Percent Error')
-    # a = plt.subplot(1, 3, 1, aspect='equal')
-    # xr.plot.imshow(rel_err.sel(z=0, method='nearest'), norm=norm, cmap=cmap)
-    # a.set_title(None)
-    # a.set_aspect('equal')
-    # a = plt.subplot(1, 3, 2, aspect='equal')
-    # xr.plot.imshow(rel_err.sel(y=0, method='nearest'), norm=norm, cmap=cmap)
-    # a.set_title(None)
-    # a.set_aspect('equal')
-    # a = plt.subplot(1, 3, 3, aspect='equal')
-    # xr.plot.imshow(rel_err.sel(x=0, method='nearest'), norm=norm, cmap=cmap)
-    # a.set_title(None)
-    # a.set_aspect('equal')
-    # plt.tight_layout(pad=1)
-    # fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(fig, width=800)))
-
     fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(
-        carderr(recon, density_truth, vol),
+        # carderr(recon, density_truth, vol, levels=[25]),
+        cardplotaxes(recon, density_truth, vol, yscale='log'),
         width=800
     )))
 
@@ -237,14 +215,31 @@ for title, coeff in coeffs.items():
 fig_loss = []
 for title, loss in losses.items():
     if title == 'Truth':
-        fig_loss.append(Img(None, width=300))
+    #     fig_loss.append(Img(None, width=300))
         continue
 
-    fig = plt.figure(figsize=(3, 3))
-    plt.title(f"Loss={loss[-1]:.3e}")
-    plt.semilogy(loss)
+    fig, ax = plt.subplots(figsize=(3, 3))
+
+    c = 'tab:blue'
+    ax.set_title(f"Loss={loss[-1]:.3e}")
+    ax.semilogy(loss, color=c)
+    fig.tight_layout()
+    ax.grid(True)
+    ax.tick_params(axis='y', labelcolor=c)
+    ax.set_ylabel('loss', color=c)
+
+    c = 'tab:red'
+    sax = ax.twinx()
+    sax.semilogy(np.array(sloss) * 100, color=c)
+    from matplotlib.ticker import ScalarFormatter
+    sax.yaxis.set_major_formatter(ScalarFormatter())
+    sax.yaxis.set_minor_formatter(ScalarFormatter())
+    for label in sax.yaxis.get_ticklabels(which='minor')[1::2]:
+        label.set_visible(False)
+    sax.tick_params(axis='y', labelcolor=c, which='both')
+    sax.set_ylabel('absolute % error', color=c)
+
     plt.tight_layout()
-    plt.grid(True)
 
     fig_loss.append(
         Figure(f'{title} Loss', Img(fig, height=300))
@@ -267,19 +262,20 @@ page_code = Code(open('zoennchen_multi.py').read())
 noisy_str = 'noisy' if f_truth.use_noise else 'noiseless'
 # chans = ''.join(c.camID for c in cams).lower()
 display_dir = Path('/srv/www/display')
-path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{start}{desc}.html'
+# path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{start}{desc}.html'
+path = display_dir / f'{num_shells}shells_L{max_l}_{num_obs}obs_{start}{desc}.html'
 p = Page(
     [
+        fig_rel_err,
+        fig_loss,
+        fig_sphcoeffs,
         [
             Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms))._repr_html_())),
         ],
         fig_meas,
         fig_density,
-        fig_rel_err,
         # fig_abs_err,
         fig_recon_slice,
-        fig_loss,
-        fig_sphcoeffs,
         settings,
         page_code
     ],
