@@ -1,0 +1,16 @@
+__pycache__/
+weekly_prez
+**/database/
+**/.*.json
+cossmo/
+
+**/*.hdf
+**/*.h5
+**/*.parquet
+**/*.zip
+**/*.log
+
+# database experimentation
+databases/*_test/
+databases/data/
+zarr_pipeline/database/
