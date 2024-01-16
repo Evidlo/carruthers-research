@@ -31,7 +31,8 @@ vol = default_vol(shape=s, size=50)
 # ----- Mission Setup -----
 # %% setup
 
-mo = 3
+# mo = 3
+mo=(mo:=float(os.environ['mo']))
 num_obs = 50
 cam_mode = nadir_wfi_mode()
 cam_spec = CamSpec(cam_mode, true_flat=False)
@@ -121,7 +122,7 @@ print('6 gradient')
 _, losses[name], coeffs[name], ys[name], sloss = gd(
     f, y_truth,
     model=models[name],
-    num_iterations=6000,
+    num_iterations=4000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
     loss_fn=square_loss,
@@ -197,8 +198,8 @@ for title, rel_err in rel_errors.items():
         continue
 
     fig_rel_err.append(Figure(f'{title} Rel. Err.', Img(
-        # carderr(recon, density_truth, vol, levels=[25]),
-        cardplotaxes(recon, density_truth, vol, yscale='log'),
+        carderr(recon, density_truth, vol, levels=[25]),
+        # cardplotaxes(recon, density_truth, vol, yscale='log'),
         width=800
     )))
 
@@ -263,7 +264,7 @@ noisy_str = 'noisy' if f_truth.use_noise else 'noiseless'
 # chans = ''.join(c.camID for c in cams).lower()
 display_dir = Path('/srv/www/display')
 # path = display_dir / f'{mo}mo_{noisy_str}_{num_obs}obs_{start}{desc}.html'
-path = display_dir / f'{num_shells}shells_L{max_l}_{num_obs}obs_{start}{desc}.html'
+path = display_dir / f'{mo}mo_{num_shells}shells_L{max_l}_{num_obs}obs_{start}{desc}.html'
 p = Page(
     [
         fig_rel_err,
