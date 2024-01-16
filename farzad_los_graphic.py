@@ -65,7 +65,7 @@ fig, axs = plt.subplots(2, 4, figsize=(10, 5), constrained_layout=True)
 # cam - camera
 # d - LOS downsample factor
 
-interval = 15
+interval = 1
 vol = default_vol()
 seasons = ('spring', 'summer', 'fall', 'winter')
 cams = (CameraWFI(), CameraNFI())
@@ -84,7 +84,6 @@ for ax_cam, cam, d in zip(axs, cams, (16, 64)):
             for ep10 in ep[:, 0, ::d].T:
                 ax.axline(sp[:2], ep10[:2], color=c)
 
-            ax.set_aspect('equal')
             # ax.axis('equal')
             width = 25
             ax.set_xlim([-width, width])
@@ -93,6 +92,9 @@ for ax_cam, cam, d in zip(axs, cams, (16, 64)):
                     )
             ax.minorticks_on()
 
+for ax in axs[1]:
+    ax.set_xlabel('Re')
+
 add_headers(
     fig,
     row_headers=list(map(lambda c: c.camID, cams)),
@@ -100,5 +102,5 @@ add_headers(
 )
 # plt.tight_layout()
 plt.suptitle(f'Interval: {interval}d')
-plt.savefig('/srv/www/out.png')
+plt.savefig(f'/srv/www/los{interval}.png')
 orbit_svg(vol, vgts).save('/srv/www/out.gif')
