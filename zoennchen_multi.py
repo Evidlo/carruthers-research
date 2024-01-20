@@ -31,8 +31,8 @@ vol = default_vol(shape=s, size=50)
 # ----- Mission Setup -----
 # %% setup
 
-# mo = 3
-mo=(mo:=float(os.environ['mo']))
+mo = 3
+# mo=(mo:=float(os.environ['mo']))
 num_obs = 50
 cam_mode = nadir_wfi_mode()
 cam_spec = CamSpec(cam_mode, true_flat=False)
@@ -59,9 +59,9 @@ view_geoms = gen_mission(
     # start='2025-04-01', duration=30*mo,
     # start='2025-05-15'
     # start=(start:='spring'),
-    # start=(start:='summer'),
+    start=(start:='summer'),
     # start=(start:='fall'),
-    start=(start:='winter'),
+    # start=(start:='winter'),
     # start=(start:=os.environ['start'])
 )
 # view_geoms = [view_geoms[0] + view_geoms[1]]
@@ -73,7 +73,6 @@ view_geoms = gen_mission(
 ys = {}
 coeffs = {}
 models = {}
-losses = {}
 
 # models['Truth'] = SphHarmBasisModel(vol, num_shells=20, max_l=2, device='cuda')
 # coeffs['Truth'] = t.zeros(models['Truth'].coeffs_shape, device='cuda')
@@ -108,7 +107,6 @@ desc = '_pratik'
 ys['Truth'] = y_truth
 coeffs['Truth'] = density_truth
 models['Truth'] = FullyDenseModel(vol, device='cuda')
-losses['Truth'] = None
 
 print('5 model setup')
 name = 'sph'
@@ -119,20 +117,25 @@ models[name] = SphHarmBasisModel(
 print('6 gradient')
 # grid_cart = vol2cart(vol)
 # grid_sph = cart2sph(grid_cart)
-_, losses[name], coeffs[name], ys[name], sloss = gd(
+coeffs[name], ys[name], losses = gd(
     f, y_truth,
     model=models[name],
-    num_iterations=4000,
+    num_iterations=15000,
     lr=1e2,
     optimizer=(optimizer:=optim.Yogi),
-    loss_fn=square_loss,
-    reg_fn=neg_reg,
+    loss_fns = [
+        SquareLoss(fidelity=True),
+        1e14 * NegRegularizer(),
+        ReqErrMean(density_truth, use_grad=False)
+    ]
+    # loss_fn=SquareLoss(),
+    # reg_fn=NegRegularizer(),
     # loss_fn=square_loss_mask_gen(projection_mask(view_geoms, r=20)),
     # loss_fn=cheater_loss_gen(density_truth),
     # reg_fn=neg_reg_mask_gen(volume_mask(vol, r=20)),
-    reg_lam=1e14,
-    loss_history=True,
-    aux_loss_fn=max_req_err_gen(density_truth),
+    # reg_lam=1e14,
+    # loss_history=True,
+    # aux_loss_fn=max_req_err_gen(density_truth),
 )
 
 # ---------- Plotting ----------
@@ -213,42 +216,17 @@ for title, coeff in coeffs.items():
     )
 
 # --- Loss ---
-fig_loss = []
-for title, loss in losses.items():
-    if title == 'Truth':
-    #     fig_loss.append(Img(None, width=300))
-        continue
-
-    fig, ax = plt.subplots(figsize=(3, 3))
-
-    c = 'tab:blue'
-    ax.set_title(f"Loss={loss[-1]:.3e}")
-    ax.semilogy(loss, color=c)
-    fig.tight_layout()
-    ax.grid(True)
-    ax.tick_params(axis='y', labelcolor=c)
-    ax.set_ylabel('loss', color=c)
-
-    c = 'tab:red'
-    sax = ax.twinx()
-    sax.semilogy(np.array(sloss) * 100, color=c)
-    from matplotlib.ticker import ScalarFormatter
-    sax.yaxis.set_major_formatter(ScalarFormatter())
-    sax.yaxis.set_minor_formatter(ScalarFormatter())
-    for label in sax.yaxis.get_ticklabels(which='minor')[1::2]:
-        label.set_visible(False)
-    sax.tick_params(axis='y', labelcolor=c, which='both')
-    sax.set_ylabel('absolute % error', color=c)
-
-    plt.tight_layout()
-
-    fig_loss.append(
-        Figure(f'{title} Loss', Img(fig, height=300))
-    )
+# fig_loss = []
+# for title, loss in losses.items():
+#     if title == 'Truth':
+#     #     fig_loss.append(Img(None, width=300))
+#         continue
+fig = loss_plot(losses)
+fig_loss = Figure(f'{title} Loss', Img(fig, height=300))
 
 fig, _ = plt.subplots(figsize=((6, 4)))
 sphplot = sphharmplot(coeffs['sph'], models['sph'], figure=fig)
-fig_sphcoeffs = Figure('Sph Coeffs', Img(sphplot, width=300))
+fig_sphcoeffs = Figure('Sph Coeffs', Img(sphplot, height=300))
 
 settings = HTML('<br>'.join([
     f'{f.use_noise=}',
@@ -268,10 +246,10 @@ path = display_dir / f'{mo}mo_{num_shells}shells_L{max_l}_{num_obs}obs_{start}{d
 p = Page(
     [
         fig_rel_err,
-        fig_loss,
-        fig_sphcoeffs,
         [
-            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms))._repr_html_())),
+            fig_loss,
+            fig_sphcoeffs,
+            Figure('Meas. Locations', HTML(orbit_svg(vol, viewgeom2ts(view_geoms), height=300, width=480)._repr_html_())),
         ],
         fig_meas,
         fig_density,
