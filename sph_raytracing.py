@@ -3,6 +3,17 @@
 
 import numpy as np
 from numpy import newaxis as na
+import torch as t
+
+def filter_r(points, max_r):
+    points[np.linalg.norm(points, axis=-1) > max_r] = float('nan')
+
+def filter_r_torch(points, max_r):
+    # find voxels greater than radius
+    greater = t.linalg.norm(points, axis=-1) > max_r
+    greater = t.repeat_interleave(greater.unsqueeze(-1), 3, dim=-1)
+    points[greater] = float('nan')
+    return points
 
 def a(xs, rays, num_planes):
     """Compute intersections of rays with azimuth planes
@@ -32,13 +43,13 @@ def a(xs, rays, num_planes):
 
     return t, points
 
-def e(xs, rays, num_cones):
+def e(xs, rays, theta):
     """Compute intersections of rays with elevation cones
 
     Args:
         xs (tuple): starting points of rays (num_rays, 3)
         rays (tuple): directions of rays (num_rays, 3)
-        num_cones (int): Number of elevation cones
+        theta (int or list[float]): Number of elevation cones or cone elevations
 
     Returns:
         t (ndarray): distance of each point from x along ray
@@ -49,7 +60,8 @@ def e(xs, rays, num_cones):
     Reference: http://lousodrome.net/blog/light/2017/01/03/intersection-of-a-ray-and-a-cone/
     Reference: "Intersection of a Line and a Cone", David Eberly, Geometric Tools
     """
-    theta = np.linspace(0, np.pi/2, num_cones, endpoint=False)
+    if type(theta) is int:
+        theta = np.linspace(0, np.pi/2, theta, endpoint=True)
     xs = np.asarray(xs, dtype='float')
     rays = np.asarray(rays, dtype='float')
 
@@ -57,10 +69,15 @@ def e(xs, rays, num_cones):
 
     # (num_rays, num_cones)
 
+    v = np.array((0, 0, 1))
+
     dotproduct = lambda a, b: np.einsum('ij,ij->i', a, b)
-    a = rays[:, 1:2]**2 - (np.cos(theta)**2)[None, :]
-    b = 2 * (rays[:, 1:2] * xs[:, 1:2] - dotproduct(rays, xs)[:, None] * (np.cos(theta)**2)[None, :])
-    c = xs[:, 1:2]**2 - (np.linalg.norm(xs, axis=1)**2)[:, None] * (np.cos(theta)**2)[None, :]
+    a = rays[:, 2:]**2 - (np.cos(theta)**2)[None, :]
+    b = 2 * (rays[:, 2:] * xs[:, 2:] - dotproduct(rays, xs)[:, None] * (np.cos(theta)**2)[None, :])
+    c = xs[:, 2:]**2 - (np.linalg.norm(xs, axis=1)**2)[:, None] * (np.cos(theta)**2)[None, :]
+
+    # a = dotproduct(rays, v)[:, None] - (np.cos(theta)**2)[None, :]
+    # b = 2 * (dotproduct(rays, v) *)
 
     # ray parallel to cone
     # t_parallel = np.empty((len(rays), num_cones, 2))
@@ -69,9 +86,18 @@ def e(xs, rays, num_cones):
 
     # ray not parallel to cone
     delta = b**2 - 4*a*c
-    t_normal = np.empty((len(rays), num_cones, 2))
-    t_normal[:, :, 0] = (-b + np.sqrt(delta)) / (2 * a)
-    t_normal[:, :, 1] = (-b - np.sqrt(delta)) / (2 * a)
+
+    # compute single or double intersection
+    is_single = np.isclose(delta, 0)
+
+    # ignore warnings about sqrt(-1) and /0
+    with np.errstate(invalid='ignore'):
+        t1 = (-b + np.sqrt(delta)) / (2 * a)
+        t2 = (-b - np.sqrt(delta)) / (2 * a)
+
+    t_normal = np.empty((len(rays), len(theta), 2))
+    t_normal[:, :, 0] = np.where(is_single, -2*c / b, t1)
+    t_normal[:, :, 1] = np.where(is_single, float('inf'), t2)
 
     # FIXME: we don't check if ray is parallel to cone
     # is_parallel = np.isclose(a, 0) and not np.isclose(b, 0)
@@ -82,31 +108,32 @@ def e(xs, rays, num_cones):
     # t = np.choose(is_parallel, (t_normal, t_parallel))
     t = t_normal
 
-    points = rays[:, na, na, :] * t[:, :, :, na] + xs[:, na, na, :]
+    # ignore warnings about nan, inf multiplication
+    with np.errstate(invalid='ignore'):
+        points = rays[:, na, na, :] * t[:, :, :, na] + xs[:, na, na, :]
 
     return t, points
 
 
-def e_single(x, ray):
-    theta = np.pi / 4
+def e_single(x, ray, theta=np.pi/4):
     x = np.asarray(x, dtype='float')
     ray = np.asarray(ray, dtype='float')
 
-    v = np.array((0, 1, 0))
+    v = np.array((0, 0, 1))
 
     ray /= np.linalg.norm(ray)
 
     a = np.dot(ray, v)**2 - np.cos(theta)**2
     b = 2 * (np.dot(ray, v) * np.dot(x, v) - np.dot(ray, x) * np.cos(theta)**2)
     c = np.dot(x, v)**2 - np.dot(x, x) * np.cos(theta)**2
+    delta = b**2 - 4*a*c
 
-    if np.isclose(a, 0) and not np.isclose(b, 0):
+    if np.isclose(delta, 0):
         t = -c / b, float('inf')
     else:
-        delta = b**2 - 4*a*c
         t = (-b + np.sqrt(delta)) / (2*a), (-b - np.sqrt(delta)) / (2*a)
 
-    return t
+    return a, b, c, t
 
 def e_single2(x, ray):
     theta = np.pi / 4
@@ -162,7 +189,9 @@ def r(xs, rays, radii, limits=None):
     tc = dotproduct(-xs, rays) # (num_rays)
     d = np.sqrt(dotproduct(xs, xs) - tc**2) # (num_rays)
 
-    t1c = np.sqrt(radii[None, :]**2 - d[:, None]**2) # (num_rays, num_spheres)
+    # ignore sqrt(-1) warning
+    with np.errstate(invalid='ignore'):
+        t1c = np.sqrt(radii[None, :]**2 - d[:, None]**2) # (num_rays, num_spheres)
 
     t = np.empty((len(rays), len(radii), 2))
     t[:, :, 0], t[:, :, 1] = tc[:, None] - t1c, tc[:, None] + t1c
