@@ -22,6 +22,8 @@ from astropy.constants import R_earth
 from pathlib import Path
 from subprocess import run
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 import torch as t
 import inspect
 
@@ -68,7 +70,7 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     truth = m()
     vg_desc = f'{f.bin_funcs[0].spacing}{"x".join(map(str, f.vg.shape[1:]))}'
     # vg_desc = f'lin{"x".join(map(str, f.vg.shape[1:]))}'
-    desc = f'{vg_desc}_{grid.shape.r}r{mstr}_inner{grid.size.r[0]}Re'
+    desc = f'{vg_desc}_{grid.shape.r}r{mstr}_inner{grid.mask_rs["WFI"][0]}Re'
 
 
     mask = t.ones(f.vg.shape, device=device)
@@ -80,7 +82,7 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     # %% debug
     # tp_r = tangent_points(f.vg.ray_starts, f.vg.rays).norm(dim=-1).to(device=device)
     # analmeasurements = 2 * t.sqrt(grid.size.r[1]**2 - tp_r**2) * constval * f.projection_masks
-    analmeasurements = m.analytic(f.vg) * f.projection_masks / R_earth.to('cm').value
+    analmeasurements = m.analytic(f.vg) * f.projection_masks
 
 
 
@@ -134,13 +136,13 @@ for num_obs, win, season, difflam, t_int, gshp in items:
 
         ax_err = plt.subplot(M, N, 1)
         img = ax_err.imshow(errnoise)
-        ax_err.set_title(f'Sq Error : Fake (noiseless) → Fake (noisy) ({num_img:02d}/{len(realmeasurements)})')
+        ax_err.set_title(f'Sq Error : Fake (noiseless) → Fake (noisy) ({num_img+1:02d}/{len(realmeasurements)})')
         plt.gcf().colorbar(img, ax=ax_err)
 
 
         ax_err = plt.subplot(M, N, 3)
         img = ax_err.imshow(err)
-        ax_err.set_title(f'Sq Error : Real (noiseless) → Fake (noiseless) ({num_img:02d}/{len(realmeasurements)})')
+        ax_err.set_title(f'Sq Error : Real (noiseless) → Fake (noiseless) ({num_img+1:02d}/{len(realmeasurements)})')
         plt.gcf().colorbar(img, ax=ax_err)
 
         ax2 = plt.subplot(M, N, 2)
