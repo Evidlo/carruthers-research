@@ -17,6 +17,8 @@ from sph_raytracer.retrieval import *
 from sph_raytracer.loss import *
 from sph_raytracer.model import *
 
+from astropy.constants import R_earth
+
 from pathlib import Path
 from subprocess import run
 import matplotlib.pyplot as plt
@@ -33,7 +35,7 @@ device = 'cuda'
 from itertools import product
 items = product(
     # [.033],
-    [1], # num_obs
+    [10], # num_obs
     [28], # window (days)
     ['spring'], # season
     [1e2], # difflam
@@ -41,7 +43,7 @@ items = product(
     [50], # grid shape
 )
 
-grid = default_grid((500, 50, 50), spacing='log')
+grid = DefaultGrid((500, 50, 50), spacing='log', mask_rs={'WFI':(5, 25)})
 
 # for season, difflam, t_int in items:
 for num_obs, win, season, difflam, t_int, gshp in items:
@@ -56,15 +58,17 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     ]
     sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
 
-
-    f = ForwardSph(sc, grid, use_albedo=True, use_aniso=True, use_noise=True, science_binning=True, device=device)
+    f = ForwardSph(sc, grid, use_albedo=False, use_aniso=False, use_noise=True, science_binning=True, device=device)
 
     # ----- Debug -----
     # %% debug2
-    m = Zoennchen24Model(grid=grid, device=device); mstr = ''
+    # m = Zoennchen24Model(grid=grid, device=device); mstr = ''
+    # m = ConstModel(grid=grid, fill=1000, device=device); mstr='_const'
+    m = Zoennchen00Model(grid=grid, device=device); mstr='_zold'
     truth = m()
-    # truth = tr.ones(grid.shape, device=device) * 1000; mstr='_const1000'
-    desc = f'head_evanmask_disablenoise_{grid.shape.r}r{mstr}'
+    vg_desc = f'{f.bin_funcs[0].spacing}{"x".join(map(str, f.vg.shape[1:]))}'
+    # vg_desc = f'lin{"x".join(map(str, f.vg.shape[1:]))}'
+    desc = f'{vg_desc}_{grid.shape.r}r{mstr}_inner{grid.size.r[0]}Re'
 
 
     mask = t.ones(f.vg.shape, device=device)
@@ -74,16 +78,24 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     fakemeasurements = f.fake_noise(truth, disable_noise=True) * mask
     fakemeasurements2 = f.fake_noise(truth) * mask
     # %% debug
+    # tp_r = tangent_points(f.vg.ray_starts, f.vg.rays).norm(dim=-1).to(device=device)
+    # analmeasurements = 2 * t.sqrt(grid.size.r[1]**2 - tp_r**2) * constval * f.projection_masks
+    analmeasurements = m.analytic(f.vg) * f.projection_masks / R_earth.to('cm').value
+
+
 
     for num_img in range(0, len(realmeasurements)):
 
         realmeas = realmeasurements[num_img]
         fakemeas = fakemeasurements[num_img]
         fakemeas2 = fakemeasurements2[num_img]
+        analmeas = analmeasurements[num_img]
 
-        M, N = 2, 1
+
+        M, N = 2, 2
         plt.close('all')
-        plt.figure(figsize=(6, 5))
+        plt.figure(figsize=(12, 5))
+
         # ax_realmeas_rect.set_title('Rect Real Noise')
         # ax_realmeas = plt.subplot(M, N, 2, projection='polar')
         # image_stack(realmeas, f.vg[num_img], ax=ax_realmeas)
@@ -122,13 +134,27 @@ for num_obs, win, season, difflam, t_int, gshp in items:
 
         ax_err = plt.subplot(M, N, 1)
         img = ax_err.imshow(errnoise)
-        ax_err.set_title('Sq Error : Fake1 (noiseless) → Fake2 (noisy)')
+        ax_err.set_title(f'Sq Error : Fake (noiseless) → Fake (noisy) ({num_img:02d}/{len(realmeasurements)})')
         plt.gcf().colorbar(img, ax=ax_err)
 
-        ax_err = plt.subplot(M, N, 2)
+
+        ax_err = plt.subplot(M, N, 3)
         img = ax_err.imshow(err)
-        ax_err.set_title('Sq Error : Real (Noiseless) → Fake (noiseless)')
+        ax_err.set_title(f'Sq Error : Real (noiseless) → Fake (noiseless) ({num_img:02d}/{len(realmeasurements)})')
         plt.gcf().colorbar(img, ax=ax_err)
+
+        ax2 = plt.subplot(M, N, 2)
+        fakeanalerr = ((fakemeas - analmeas)**2).detach().cpu().numpy()
+        img = ax2.imshow(fakeanalerr)
+        ax2.set_title(f'Sq Error : Fake (noiseless) → Analytic (noiseless) ({num_img:02d}/{len(realmeasurements)})')
+        plt.gcf().colorbar(img, ax=ax2)
+
+        ax4 = plt.subplot(M, N, 4)
+        realanalerr = ((realmeas - analmeas)**2).detach().cpu().numpy()
+        img = ax4.imshow(realanalerr)
+        ax4.set_title(f'Sq Error : Real (noiseless) → Analytic (noiseless) ({num_img:02d}/{len(realmeasurements)})')
+        plt.gcf().colorbar(img, ax=ax4)
+
 
         plt.tight_layout()
         outdir = Path('/www/tmp/')
