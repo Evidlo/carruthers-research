@@ -7,7 +7,7 @@ from glide.common_components.orbits import circular_orbit
 from glide.science.forward_sph import *
 from glide.science.model_sph import *
 from glide.science.plotting import *
-from glide.science.plotting_sph import carderr, cardplot, carderrmin
+from glide.science.plotting_sph import carderr, cardplot, carderrmin, coldenserr
 from glide.science.recon.loss_sph import *
 
 from sph_raytracer import *
@@ -45,7 +45,7 @@ items = product(
     [50], # grid shape
 )
 
-grid = DefaultGrid((500, 50, 50), spacing='log', mask_rs={'WFI':(5, 25)})
+grid = DefaultGrid((500, 50, 50), spacing='log')
 
 # for season, difflam, t_int in items:
 for num_obs, win, season, difflam, t_int, gshp in items:
@@ -77,6 +77,8 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     # mask[:, :6] = 0
 
     realmeasurements = f.noise(truth, disable_noise=True) * mask
+    coldenserr(realmeasurements, f, truth, outdir='/www/fake')
+    """
     fakemeasurements = f.fake_noise(truth, disable_noise=True) * mask
     fakemeasurements2 = f.fake_noise(truth) * mask
     # %% debug
@@ -167,3 +169,4 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     cmd = f'convert -delay 30 -loop 0 {outdir / desc}_[0-9][0-9]*png {outdir / desc}.gif'
     print('running', cmd)
     run(cmd, shell=True)
+    """
