@@ -25,16 +25,48 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 import torch as t
+import numpy as np
 import inspect
 
-code = open(__file__).read()
-
-device = 'cuda'
+device = 'cpu'
 
 # ----- Setup -----
 # %% setup
 
-grid = DefaultGrid((500, 50, 50), spacing='log')
+
+# %% grid
+nr, ne, na = 200, 60, 80
+r_b = np.geomspace(3, 25, nr+1)
+# angle of midnight shadow cone in radians
+cone = np.deg2rad(45)
+halfcone = cone/2
+ce = 30 # number of elevation bins in cone
+e_b = np.concatenate((
+    # (np.linspace(0, conerad, ce:=0, endpoint=False), np.linspace(conerad, np.pi, ne-ce+1))
+    np.linspace(0, np.pi/2-halfcone, (ne-ce)//2+1)[:-1],
+    np.linspace(np.pi/2-halfcone, np.pi/2+halfcone, ce+1),
+    np.linspace(np.pi/2+halfcone, np.pi, (ne-ce)//2+1)[1:]
+))
+ca = 30 # number of azimuth bins in cone
+a_b = np.concatenate((
+    np.linspace(-np.pi, -np.pi+halfcone, ca//2 + 1),
+    np.linspace(-np.pi+halfcone, np.pi-halfcone, na-ca+1)[1:-1],
+    np.linspace(np.pi-halfcone, np.pi, ca//2 + 1),
+))
+
+r_b, e_b, a_b = map(t.from_numpy, (r_b, e_b, a_b))
+
+grid = DefaultGrid(r_b=r_b, e_b=e_b, a_b=a_b)
+grid.r = tr.sqrt(r_b[1:] * r_b[:-1])
+
+a = albedo(grid)
+f = cardplot(a, grid, method='nearest')
+f.suptitle('Albedo', fontsize=24)
+plt.savefig('/www/acustom.png')
+
+# %% other
+
+
 
 num_obs = 10
 win = 28 # window (days)
@@ -47,7 +79,7 @@ cams = [
     CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
     CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
 ]
-sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)[1:2]
+sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
 
 f = ForwardSph(
     sc, grid,
@@ -62,7 +94,8 @@ f = ForwardSph(
     use_noise=True,
     science_binning=True, scishape=(50, 100), device=device
 )
-shapestr = 'x'.join(map(str, f.scishape))
+vgshapestr = 'x'.join(map(str, f.scishape))
+gridshapestr = 'x'.join(map(str, grid.shape))
 
 # ----- Debug -----
 # %% forward
@@ -77,4 +110,5 @@ fake_nls = f.fake_noise(truth, disable_noise=True)
 fakes = f.fake_noise(truth)
 real_nls = f.noise(truth, disable_noise=True)
 
-coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', outfile=f'coldens{ual}{uno}_{shapestr}')
+desc = f'coldens{ual}{uno}_{vgshapestr}_g{gridshapestr}_custom'
+coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', outfile=desc)
