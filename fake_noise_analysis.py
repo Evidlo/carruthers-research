@@ -35,6 +35,7 @@ device = 'cpu'
 
 
 # %% grid
+"""
 nr, ne, na = 200, 60, 80
 r_b = np.geomspace(3, 25, nr+1)
 # angle of midnight shadow cone in radians
@@ -58,6 +59,9 @@ r_b, e_b, a_b = map(t.from_numpy, (r_b, e_b, a_b))
 
 grid = DefaultGrid(r_b=r_b, e_b=e_b, a_b=a_b)
 grid.r = tr.sqrt(r_b[1:] * r_b[:-1])
+"""
+
+grid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
 
 a = albedo(grid)
 f = cardplot(a, grid, method='nearest')
