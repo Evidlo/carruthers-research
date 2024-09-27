@@ -23,6 +23,8 @@ matplotlib.use('Agg')
 import torch as t
 import inspect
 
+mailstatus = 'failure'
+
 code = open(__file__).read()
 
 device = 'cuda'
@@ -42,23 +44,23 @@ items = product(
 )
 # items = [['spring', 1e-1]]
 
-# for season, difflam, t_int in items:
-for num_obs, win, season, difflam, t_int, gshp in items:
+# for season, difflam, t_op in items:
+for num_obs, win, season, difflam, t_op, gshp in items:
     t.cuda.empty_cache()
     # desc = f'circ_{difflam:.0e}_projection'
-    # desc = f'{season}_{mo}mo_{difflam:.0e}_fakenoise{t_int}_diffmean_grid{gshp}_lognew'
-    desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_int//60}hr_{difflam:.0e}_{season}'
-    # desc = f'{season}_{mo}mo_{difflam:.0e}_realnoise{t_int}'
+    # desc = f'{season}_{mo}mo_{difflam:.0e}_fakenoise{t_op}_diffmean_grid{gshp}_lognew'
+    desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{difflam:.0e}_{season}'
+    # desc = f'{season}_{mo}mo_{difflam:.0e}_realnoise{t_op}'
     # desc = f'{season}_{mo}mo_{difflam:.0e}_nonoise'
     # desc = f'{season}_{mo}mo_{difflam:.0e}'
     # desc = f'experiment'
 
     # integrate for full time between each snapshot
-    # t_int = win * 24 / num_obs
+    # t_op = win * 24 / num_obs
 
     cams = [
-        CameraL1BNFI(nadir_nfi_mode(t_int=t_int)),
-        CameraL1BWFI(nadir_wfi_mode(t_int=t_int))
+        CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
+        CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
     ]
     sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
     # sc = gen_mission(num_obs=30, orbit=circular_orbit, cams=cams)
@@ -69,9 +71,13 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     truth = m()
 
 
-    f = ForwardSph(sc, m.grid, use_albedo=False, use_aniso=False, use_noise=True, science_binning=True, device=device)
+    f = ForwardSph(
+        sc, m.grid,
+        use_albedo=(ual:=False), use_aniso=(uan:=True), use_noise=(uno:=True),
+        science_binning=(sb:=True), device=device
+    )
 
-    desc += f'_emask_noalan_tshp{m.grid.shape.r}_frac{"x".join(map(str, f.vg[0].shape))}_wfi5Re'
+    desc += f'_emask_noal_tshp{m.grid.shape.r}_frac{"x".join(map(str, f.vg[0].shape))}_wfi5Re'
 
     # meas = f.noise(truth); noise_type = 'real'
     meas = f.noise(truth, disable_noise=True); noise_type = 'realdisabled'
@@ -79,11 +85,11 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     # meas = f.fake_noise(truth); noise_type='fake'
     desc = desc.format(noise_type=noise_type)
 
-    # del f
-
     print('-----------------------------')
     print(desc)
     print('-----------------------------')
+
+    del f
 
     # ----- Retrieval -----
     #%% recon
@@ -94,8 +100,8 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     mr.proj = lambda coeffs: coeffs
     fr = ForwardSph(
         sc, mr.grid,
-        use_albedo=f.use_albedo, use_aniso=f.use_aniso, use_noise=f.use_noise,
-        science_binning=f.science_binning, device=device
+        use_albedo=ual, use_aniso=uan, use_noise=uno,
+        science_binning=sb, device=device
     )
     # fr = f
     # choose loss functions and regularizers with weights
@@ -126,8 +132,6 @@ for num_obs, win, season, difflam, t_int, gshp in items:
 
     # ----- Plotting -----
     # %% debug
-    from glide.science.plotting_sph import coldenserr
-    coldenserr(meas, f, truth, outdir='/www/recon')
     # %% plot
     from dech import *
 
@@ -153,7 +157,7 @@ for num_obs, win, season, difflam, t_int, gshp in items:
                 HTML(fr.op.plot().to_jshtml())
             ],
             [
-                # Figure("Relative Err.", Img3(carderrmin(retrieved3, truth3, mr.grid, m.grid))),
+                Figure("Relative Err.", Img3(carderrmin(retrieved3, mr.grid, m.__class__))),
             ] + fig_coeffs,
             [
                 Figure("Truth", Img(preview3d(cn(truth), m.grid), animation=True, rescale='sequence')),
@@ -180,3 +184,5 @@ for num_obs, win, season, difflam, t_int, gshp in items:
     from datetime import datetime
     # archive error plot and all code
     p.save(display_dir / 'archive' / f'{datetime.now().isoformat()}.html')
+
+mailstatus = 'success'
