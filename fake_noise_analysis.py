@@ -62,8 +62,12 @@ grid.r = tr.sqrt(r_b[1:] * r_b[:-1])
 """
 
 grid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
+# grid = DefaultGrid((500, 50, 50), spacing='log')
+gridrec = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
+# gridrec = DefaultGrid((50, 50, 50), spacing='log')
 
-a = albedo(grid)
+m = Zoennchen00Model(grid=grid, device=device)
+a = albedo(grid) * m()
 f = cardplot(a, grid, method='nearest')
 f.suptitle('Albedo', fontsize=24)
 plt.savefig('/www/acustom.png')
@@ -83,9 +87,9 @@ cams = [
     CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
     CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
 ]
-sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
+sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)[5:6]
 
-f = ForwardSph(
+freal = ForwardSph(
     sc, grid,
     use_albedo=(
         # False, ual:='_noal'
@@ -98,8 +102,14 @@ f = ForwardSph(
     use_noise=True,
     science_binning=True, scishape=(50, 100), device=device
 )
-vgshapestr = 'x'.join(map(str, f.scishape))
-gridshapestr = 'x'.join(map(str, grid.shape))
+frec = ForwardSph(
+    sc, gridrec,
+    use_albedo=freal.use_albedo, use_aniso=freal.use_aniso,
+    science_binning=freal.science_binning, scishape=freal.scishape, device=freal.device
+)
+vgshapestr = 'x'.join(map(str, freal.scishape))
+gshapestr = 'x'.join(map(str, grid.shape))
+grecshapestr = 'x'.join(map(str, gridrec.shape))
 
 # ----- Debug -----
 # %% forward
@@ -107,12 +117,14 @@ gridshapestr = 'x'.join(map(str, grid.shape))
 
 # m = Zoennchen24Model(grid=grid, device=device); mstr = ''
 # m = ConstModel(grid=grid, fill=1000, device=device); mstr='_const'
-m = Zoennchen00Model(grid=grid, device=device); mstr='_zold'
+m = Zoennchen00Model(grid=grid, device=device)
 truth = m()
+mrec = Zoennchen00Model(grid=gridrec, device=device)
+truthrec = mrec()
 
-fake_nls = f.fake_noise(truth, disable_noise=True)
-fakes = f.fake_noise(truth)
-real_nls = f.noise(truth, disable_noise=True)
+fake_nls = frec.fake_noise(truthrec, disable_noise=True)
+fakes = frec.fake_noise(truthrec)
+real_nls = freal.noise(truth, disable_noise=True)
 
-desc = f'coldens{ual}{uno}_{vgshapestr}_g{gridshapestr}_custom'
+desc = f'coldens{ual}{uno}_{gshapestr}_{grecshapestr}'
 coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', outfile=desc)
