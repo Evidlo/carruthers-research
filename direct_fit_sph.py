@@ -130,12 +130,13 @@ for truth_model in truth_models:
             lr=1e2,
             # optimizer=(optimizer:=optim.Yogi),
             loss_fns=[100 * loss],
-            coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float32, requires_grad=True),
+            # coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float32, requires_grad=True),
+            coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
             device=device
         )
         recon = recon_model(coeffs)
-        if type(recon_model) is SphHarmModel:
-            sphharm = Img(sphharmplot(coeffs, recon_model), height=200)
+        if issubclass(type(recon_model), SphHarmModel):
+            sphharm = Img(sphharmplot(recon_model.sph_coeffs(coeffs), recon_model), height=200)
         else:
             sphharm = ''
         figures.append(
