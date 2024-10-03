@@ -7,7 +7,7 @@ from glide.common_components.orbits import circular_orbit
 from glide.science.forward_sph import *
 from glide.science.model_sph import *
 from glide.science.plotting import *
-from glide.science.plotting_sph import carderr, cardplot, carderrmin
+from glide.science.plotting_sph import carderr, cardplot, carderrmin, cardplotaxes
 from glide.science.recon.loss_sph import *
 
 from pathlib import Path
@@ -36,15 +36,17 @@ from itertools import product
 items = product(
     # [.033],
     [10], # num_obs
-    [28], # window (days)
+    [28, 14], # window (days)
     ['spring'], # season
-    [1e2, 1e3, 1e4], # difflam
+    # [1e2], # difflam
+    [16, 12, 20], # cpoints
     [360], # integration time
 )
 # items = [['spring', 1e-1]]
 
 # for season, difflam, t_op in items:
-for num_obs, win, season, difflam, t_op, in items:
+# for num_obs, win, season, difflam, t_op, in items:
+for num_obs, win, season, cpoints, t_op, in items:
     t.cuda.empty_cache()
 
     # integrate for full time between each snapshot
@@ -77,10 +79,6 @@ for num_obs, win, season, difflam, t_op, in items:
     # meas = f(truth); noise_type = 'noiseless
     # meas = f.fake_noise(truth); noise_type='fake'
 
-    print('-----------------------------')
-    print(desc)
-    print('-----------------------------')
-
     del f
 
     # ----- Retrieval -----
@@ -88,28 +86,30 @@ for num_obs, win, season, difflam, t_op, in items:
     # mr = FullyDenseModel(m.grid)
     # choose a model for retrieval
     # mr = SphHarmModel(default_grid(size_r=m.grid.size.r, shape=(49, 1, 3)), max_l=3, device=device)
+    # mr = SphHarmModel(grid, device=device, max_l=3)
     fr = ForwardSph(
         sc, grid,
         use_albedo=ual, use_aniso=uan, use_noise=uno,
         science_binning=sb, device=device
     )
     # %% debug
-    mr = SphHarmModel(grid, device=device, max_l=3)
+    mr = SphHarmSplineModel(grid, max_l=3, device=device, cpoints=cpoints, spacing='log')
     mr.proj = lambda coeffs: coeffs
     # fr = f
     # choose loss functions and regularizers with weights
     loss_fns = [
         1 * SquareLoss(projection_mask=fr.pm),
+        # 1e2 * SquareRelLoss(projection_mask=fr.pm),
         1e4 * NegRegularizer(),
-        differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='sq_diff_log')
+        # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='sq_diff_log')
         # differr:=1e-1 * DiffLoss(mr.grid, mode='density', device=device, _reg='gshp_diff_log')
         # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='log_corr_diff')
     ]
     # loss_fns = [CheaterLoss(truth)]
     loss_fns += [req_err := ReqErr(truth, m.grid, mr.grid, interval=100)]
     coeffs, retrieved_meas, losses = gd(
-        fr, meas, mr, lr=5e0, coeffs=t.load('/tmp/coeffs.tr', weights_only=True),
-        loss_fns=loss_fns, num_iterations=90000
+        fr, meas, mr, lr=5e0,
+        loss_fns=loss_fns, num_iterations=120000,
     )
 
     retrieved = mr(coeffs)
@@ -127,8 +127,16 @@ for num_obs, win, season, difflam, t_op, in items:
     retrieved_meas_error = t.zeros_like(meas)
     retrieved_meas_error[nonzero] = (retrieved_meas - meas)[nonzero] / meas[nonzero]
 
-    desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{differr.lam:.0e}_{season}_init_{differr._reg}'
-    desc = desc.format(noise_type=noise_type)
+    # desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{differr.lam:.0e}_{season}_init_{differr._reg}'
+    cshape = 'x'.join(map(str, mr.coeffs_shape))
+    # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
+    # desc = desc.format(noise_type=noise_type)
+    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_abserr_{t_op//60}hr_{season}'
+
+    print('-----------------------------')
+    print(desc)
+    print('-----------------------------')
+
     # ----- Plotting -----
     # %% plot
     from dech import *
@@ -137,10 +145,10 @@ for num_obs, win, season, difflam, t_op, in items:
 
     # Img3 = lambda *a, **kw: Img(*a, *kw)
     fig_coeffs = []
-    if isinstance(m, SphHarmModel):
-        fig_coeffs += [Figure("Truth Coeffs", Img(sphharmplot(coeffs_truth, m), height=300))]
-    if isinstance(mr, SphHarmModel):
-        fig_coeffs += [Figure("Recon Coeffs", Img(sphharmplot(coeffs, mr), height=300))]
+    if issubclass(type(m), SphHarmModel):
+        fig_coeffs += [Figure("Truth Coeffs", Img(sphharmplot(m.sph_coeffs(coeffs_truth), m), height=300))]
+    if issubclass(type(mr), SphHarmModel):
+        fig_coeffs += [Figure("Recon Coeffs", Img(sphharmplot(mr.sph_coeffs(coeffs), mr), height=300))]
 
     display_dir = Path('/srv/www/sph')
     file = display_dir / f'{mstr}_{desc}.html'
@@ -161,7 +169,10 @@ for num_obs, win, season, difflam, t_op, in items:
                 Figure("Truth", Img(preview3d(cn(truth), m.grid), animation=True, rescale='sequence')),
                 Figure("Recon", Img(preview3d(cn(retrieved), mr.grid), animation=True, rescale='sequence')),
             ],
-            [Figure("Density", Img(cardplot(retrieved3, mr.grid)))],
+            [
+                Figure("Density", Img3(cardplot(retrieved3, mr.grid))),
+                Figure("Density", Img3(cardplotaxes(retrieved3, mr.grid))),
+            ],
             [
                 # Figure("Truth Obs", Img(meas.cpu(), animation=True, format='gif')),
                 # Figure("Recon Obs", Img(retrieved_meas.cpu(), animation=True, format='gif')),
@@ -171,7 +182,7 @@ for num_obs, win, season, difflam, t_op, in items:
                 # Figure("Percent Err Obs", HTML(image_stack(retrieved_meas_error.cpu(), fr.vg).to_jshtml()))
             ],
             Code(code),
-            Code(inspect.getsource(differr.compute))
+            # Code(inspect.getsource(differr.compute))
         ],
         css='.animation {height: 300px};'
     )

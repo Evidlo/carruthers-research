@@ -33,9 +33,25 @@ recon_models = (
     # SphHarmModel(grid, max_l=3, device=device, monotonic=True),
     # SphHarmModel(grid, max_l=4, device=device, monotonic=True),
     # SphHarmModel(grid, max_l=5, device=device),
-    SplineModel(grid, (10, 50, 50), device=device),
-    SplineModel(grid, (20, 50, 50), device=device),
-    SplineModel(grid, (30, 50, 50), device=device),
+    # SplineModel(grid, (10, 10, 10), device=device),
+    # SplineModel(grid, (10, 10, 5), device=device),
+    # SplineModel(grid, (20, 50, 50), device=device),
+    # SplineModel(grid, (30, 50, 50), device=device),
+
+    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20),
+    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=10, spacing='log'),
+    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20, spacing='log'),
+    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=30, spacing='log'),
+    # SphHarmSplineModel(grid, max_l=3, device=device, cpoints=20),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=8, spacing='log'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=12, spacing='log'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=16, spacing='log'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=30, spacing='log'),
+
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=8, spacing='lin'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=12, spacing='lin'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=16, spacing='lin'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=30, spacing='lin'),
 )
 
 figures = []

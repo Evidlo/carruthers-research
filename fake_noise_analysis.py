@@ -61,13 +61,13 @@ grid = DefaultGrid(r_b=r_b, e_b=e_b, a_b=a_b)
 grid.r = tr.sqrt(r_b[1:] * r_b[:-1])
 """
 
-grid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
 # grid = DefaultGrid((500, 50, 50), spacing='log')
+# gridrec = DefaultGrid((500, 50, 50), spacing='log')
+grid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
 gridrec = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
-# gridrec = DefaultGrid((50, 50, 50), spacing='log')
 
 m = Zoennchen00Model(grid=grid, device=device)
-a = albedo(grid) * m()
+a = albedo(grid)
 f = cardplot(a, grid, method='nearest')
 f.suptitle('Albedo', fontsize=24)
 plt.savefig('/www/acustom.png')
@@ -87,7 +87,7 @@ cams = [
     CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
     CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
 ]
-sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)[5:6]
+sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)[9:10]
 
 freal = ForwardSph(
     sc, grid,
@@ -126,5 +126,8 @@ fake_nls = frec.fake_noise(truthrec, disable_noise=True)
 fakes = frec.fake_noise(truthrec)
 real_nls = freal.noise(truth, disable_noise=True)
 
-desc = f'coldens{ual}{uno}_{gshapestr}_{grecshapestr}'
-coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', outfile=desc)
+# desc = f'coldens{ual}{uno}_{gshapestr}_{grecshapestr}_newalbedo'
+# errfun = None
+desc = f'abserr{ual}{uno}_{gshapestr}_{grecshapestr}_newalbedo'
+errfun = lambda a, b: (a - b).abs()
+coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', errfun=errfun, outfile=desc)
