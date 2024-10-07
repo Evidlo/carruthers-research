@@ -1,7 +1,6 @@
 pillow
 matplotlib
 ipython
-ipython-cells
 ipdb
 pandas
 openpyxl
