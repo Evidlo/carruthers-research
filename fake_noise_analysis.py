@@ -7,7 +7,7 @@ from glide.common_components.orbits import circular_orbit
 from glide.science.forward_sph import *
 from glide.science.model_sph import *
 from glide.science.plotting import *
-from glide.science.plotting_sph import carderr, cardplot, carderrmin, coldenserr
+from glide.science.plotting_sph import carderr, cardplot, carderrmin, coldenserr, coldenserr2
 from glide.science.recon.loss_sph import *
 
 from sph_raytracer import *
@@ -75,8 +75,7 @@ plt.savefig('/www/acustom.png')
 # %% other
 
 
-
-num_obs = 10
+num_obs = 2
 win = 28 # window (days)
 season = 'spring'
 t_op = 360 # integration time
@@ -87,7 +86,7 @@ cams = [
     CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
     CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
 ]
-sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)[9:10]
+sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
 
 freal = ForwardSph(
     sc, grid,
@@ -125,9 +124,23 @@ truthrec = mrec()
 fake_nls = frec.fake_noise(truthrec, disable_noise=True)
 fakes = frec.fake_noise(truthrec)
 real_nls = freal.noise(truth, disable_noise=True)
+reals = freal.noise(truth)
+real_alex_nls = freal.noise(truth, noise_engine='alex', disable_noise=True)
+real_alexs = freal.noise(truth, noise_engine='alex')
+fake_alex_nls = freal.noise(truth, noise_engine='alexfake', disable_noise=True)
+fake_alexs = freal.noise(truth, noise_engine='alexfake')
 
 # desc = f'coldens{ual}{uno}_{gshapestr}_{grecshapestr}_newalbedo'
 # errfun = None
-desc = f'abserr{ual}{uno}_{gshapestr}_{grecshapestr}_newalbedo'
-errfun = lambda a, b: (a - b).abs()
+# %% plot
+desc = f'abserr{ual}{uno}_{gshapestr}_{grecshapestr}_alex'
+# errfun = lambda a, b: (a - b).abs()
+errfun = None
 coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', errfun=errfun, outfile=desc)
+
+# image_stack(real_alex_nls, colorbar=True).save('/www/fake/reals_alex.gif')
+# image_stack(real_nls, colorbar=True).save('/www/fake/reals.gif')
+coldenserr2(real_alex_nls, real_nls, real_alex_nls, real_nls, outdir='/www/fake', outfile='realalex_realevan_nl')
+coldenserr2(fake_alex_nls, real_nls, fake_alex_nls, real_nls, outdir='/www/fake', outfile='fakealex_realevan_nl')
+coldenserr2(fake_alex_nls, fake_nls, fake_alex_nls, fake_nls, outdir='/www/fake', outfile='fakealex_fakeevan_nl')
+coldenserr2(real_alex_nls, fake_nls, real_alex_nls, fake_nls, outdir='/www/fake', outfile='fakealex_fakeevan_nl')
