@@ -36,10 +36,10 @@ from itertools import product
 items = product(
     # [.033],
     [10], # num_obs
-    [28, 14], # window (days)
+    [28], # window (days)
     ['spring'], # season
     # [1e2], # difflam
-    [16, 12, 20], # cpoints
+    [16], # cpoints
     [360], # integration time
 )
 # items = [['spring', 1e-1]]
@@ -75,6 +75,7 @@ for num_obs, win, season, cpoints, t_op, in items:
 
 
     meas = f.noise(truth); noise_type = 'real'
+    # meas = f.noise(truth, noise_engine='alex'); noise_type = 'alex'
     # meas = f.noise(truth, disable_noise=True); noise_type = 'realdisabled'
     # meas = f(truth); noise_type = 'noiseless
     # meas = f.fake_noise(truth); noise_type='fake'
@@ -98,7 +99,8 @@ for num_obs, win, season, cpoints, t_op, in items:
     # fr = f
     # choose loss functions and regularizers with weights
     loss_fns = [
-        1 * SquareLoss(projection_mask=fr.pm),
+        # 1 * SquareLoss(projection_mask=fr.pm),
+        1 * AbsLoss(projection_mask=fr.pm),
         # 1e2 * SquareRelLoss(projection_mask=fr.pm),
         1e4 * NegRegularizer(),
         # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='sq_diff_log')
@@ -111,6 +113,8 @@ for num_obs, win, season, cpoints, t_op, in items:
         fr, meas, mr, lr=5e0,
         loss_fns=loss_fns, num_iterations=120000,
     )
+
+    # %% debug2
 
     retrieved = mr(coeffs)
     # zero out retrieval/truth below 3Re
@@ -129,13 +133,15 @@ for num_obs, win, season, cpoints, t_op, in items:
 
     # desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{differr.lam:.0e}_{season}_init_{differr._reg}'
     cshape = 'x'.join(map(str, mr.coeffs_shape))
+    errtype = type(loss_fns[0]).__name__.lower()
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
-    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_abserr_{t_op//60}hr_{season}'
+    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
 
     print('-----------------------------')
     print(desc)
     print('-----------------------------')
+    t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
 
     # ----- Plotting -----
     # %% plot
@@ -163,7 +169,7 @@ for num_obs, win, season, cpoints, t_op, in items:
                 HTML(fr.op.plot().to_jshtml())
             ],
             [
-                Figure("Relative Err.", Img3(carderrmin(retrieved3, mr.grid, m.__class__))),
+                Figure("Relative Err. (min. grid)", Img3(carderrmin(retrieved3, mr.grid, m.__class__))),
             ] + fig_coeffs,
             [
                 Figure("Truth", Img(preview3d(cn(truth), m.grid), animation=True, rescale='sequence')),
