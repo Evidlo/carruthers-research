@@ -25,6 +25,7 @@ import inspect
 
 mailstatus = 'failure'
 
+__file__ = 'recon.py'
 code = open(__file__).read()
 
 device = 'cuda'
@@ -34,7 +35,7 @@ device = 'cuda'
 
 from itertools import product
 items = product(
-    # [.033],
+    # 4.033],
     [10], # num_obs
     [28], # window (days)
     ['spring'], # season
@@ -80,6 +81,14 @@ for num_obs, win, season, cpoints, t_op, in items:
     # meas = f(truth); noise_type = 'noiseless
     # meas = f.fake_noise(truth); noise_type='fake'
 
+    # FIXME: initcoeffs
+    # adj_retrieved = f.op.T(meas / f.aniso_mask) / f.albedo_mask
+    ident_retrieved = f.op.T(t.ones_like(meas))
+    ident_retrieved[ident_retrieved==0] = 1
+    ident_meas = f.op(t.ones_like(truth))
+    ident_meas[ident_meas==0] = 1
+    adj_retrieved = f.op.T(meas / f.aniso_mask / ident_meas) / f.albedo_mask / ident_retrieved
+
     del f
 
     # ----- Retrieval -----
@@ -96,6 +105,17 @@ for num_obs, win, season, cpoints, t_op, in items:
     # %% debug
     mr = SphHarmSplineModel(grid, max_l=3, device=device, cpoints=cpoints, spacing='log')
     mr.proj = lambda coeffs: coeffs
+    # FIXME: initcoeffs
+    cheaterloss = CheaterLoss(adj_retrieved)
+    cheaterloss.kind = 'fidelity'
+    adj_coeffs, _, _ = gd(
+        lambda _: _, None, model=mr,
+        num_iterations=300, lr=1e2,
+        loss_fns=[100 * cheaterloss],
+        coeffs=t.ones(mr.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
+        device=device
+    )
+
     # fr = f
     # choose loss functions and regularizers with weights
     loss_fns = [
@@ -112,6 +132,7 @@ for num_obs, win, season, cpoints, t_op, in items:
     coeffs, retrieved_meas, losses = gd(
         fr, meas, mr, lr=5e0,
         loss_fns=loss_fns, num_iterations=120000,
+        coeffs=adj_coeffs, # FIXME: initcoeffs
     )
 
     # %% debug2
@@ -136,7 +157,8 @@ for num_obs, win, season, cpoints, t_op, in items:
     errtype = type(loss_fns[0]).__name__.lower()
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
-    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
+    # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
+    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}_initcoeff2'
 
     print('-----------------------------')
     print(desc)
