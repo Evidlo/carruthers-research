@@ -37,7 +37,7 @@ from itertools import product
 items = product(
     # 4.033],
     [10], # num_obs
-    [28], # window (days)
+    [14], # window (days)
     ['spring'], # season
     # [1e2], # difflam
     [16], # cpoints
@@ -81,14 +81,6 @@ for num_obs, win, season, cpoints, t_op, in items:
     # meas = f(truth); noise_type = 'noiseless
     # meas = f.fake_noise(truth); noise_type='fake'
 
-    # FIXME: initcoeffs
-    # adj_retrieved = f.op.T(meas / f.aniso_mask) / f.albedo_mask
-    ident_retrieved = f.op.T(t.ones_like(meas))
-    ident_retrieved[ident_retrieved==0] = 1
-    ident_meas = f.op(t.ones_like(truth))
-    ident_meas[ident_meas==0] = 1
-    adj_retrieved = f.op.T(meas / f.aniso_mask / ident_meas) / f.albedo_mask / ident_retrieved
-
     del f
 
     # ----- Retrieval -----
@@ -105,16 +97,8 @@ for num_obs, win, season, cpoints, t_op, in items:
     # %% debug
     mr = SphHarmSplineModel(grid, max_l=3, device=device, cpoints=cpoints, spacing='log')
     mr.proj = lambda coeffs: coeffs
-    # FIXME: initcoeffs
-    cheaterloss = CheaterLoss(adj_retrieved)
-    cheaterloss.kind = 'fidelity'
-    adj_coeffs, _, _ = gd(
-        lambda _: _, None, model=mr,
-        num_iterations=300, lr=1e2,
-        loss_fns=[100 * cheaterloss],
-        coeffs=t.ones(mr.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
-        device=device
-    )
+    mrinit = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing='log')
+
 
     # fr = f
     # choose loss functions and regularizers with weights
@@ -129,13 +113,19 @@ for num_obs, win, season, cpoints, t_op, in items:
     ]
     # loss_fns = [CheaterLoss(truth)]
     loss_fns += [req_err := ReqErr(truth, m.grid, mr.grid, interval=100)]
+    initcoeffs = t.zeros(mr.coeffs_shape, device=device)
+    initcoeffs.data[:, 0:1], _, _ = gd(
+        fr, meas, mrinit, lr=5e0,
+        loss_fns=loss_fns, num_iterations=1000,
+    )
+    # %% debug2
     coeffs, retrieved_meas, losses = gd(
         fr, meas, mr, lr=5e0,
-        loss_fns=loss_fns, num_iterations=120000,
-        coeffs=adj_coeffs, # FIXME: initcoeffs
+        loss_fns=loss_fns, num_iterations=60000,
+        coeffs=initcoeffs,
     )
 
-    # %% debug2
+    # %% debug3
 
     retrieved = mr(coeffs)
     # zero out retrieval/truth below 3Re
@@ -158,7 +148,7 @@ for num_obs, win, season, cpoints, t_op, in items:
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
-    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}_initcoeff2'
+    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
 
     print('-----------------------------')
     print(desc)
