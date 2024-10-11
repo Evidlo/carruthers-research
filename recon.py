@@ -36,9 +36,9 @@ device = 'cuda'
 from itertools import product
 items = product(
     # 4.033],
-    [10], # num_obs
-    [14], # window (days)
-    ['spring'], # season
+    [1], # num_obs
+    [1], # window (days)
+    ['spring', 'summer', 'fall', 'winter'], # season
     # [1e2], # difflam
     [16], # cpoints
     [360], # integration time
@@ -95,9 +95,8 @@ for num_obs, win, season, cpoints, t_op, in items:
         science_binning=sb, device=device
     )
     # %% debug
-    mr = SphHarmSplineModel(grid, max_l=3, device=device, cpoints=cpoints, spacing='log')
+    mr = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing='log')
     mr.proj = lambda coeffs: coeffs
-    mrinit = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing='log')
 
 
     # fr = f
@@ -113,16 +112,10 @@ for num_obs, win, season, cpoints, t_op, in items:
     ]
     # loss_fns = [CheaterLoss(truth)]
     loss_fns += [req_err := ReqErr(truth, m.grid, mr.grid, interval=100)]
-    initcoeffs = t.zeros(mr.coeffs_shape, device=device)
-    initcoeffs.data[:, 0:1], _, _ = gd(
-        fr, meas, mrinit, lr=5e0,
-        loss_fns=loss_fns, num_iterations=1000,
-    )
     # %% debug2
     coeffs, retrieved_meas, losses = gd(
         fr, meas, mr, lr=5e0,
-        loss_fns=loss_fns, num_iterations=60000,
-        coeffs=initcoeffs,
+        loss_fns=loss_fns, num_iterations=1000,
     )
 
     # %% debug3
@@ -148,7 +141,7 @@ for num_obs, win, season, cpoints, t_op, in items:
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
-    desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
+    desc = f'A00spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
 
     print('-----------------------------')
     print(desc)
