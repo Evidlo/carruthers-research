@@ -36,18 +36,19 @@ device = 'cuda'
 from itertools import product
 items = product(
     # 4.033],
-    [1], # num_obs
-    [1], # window (days)
-    ['spring', 'summer', 'fall', 'winter'], # season
+    [10], # num_obs
+    [14], # window (days)
+    ['spring'], # season
     # [1e2], # difflam
     [16], # cpoints
     [360], # integration time
+    np.arange(10), #trial
 )
 # items = [['spring', 1e-1]]
 
 # for season, difflam, t_op in items:
 # for num_obs, win, season, difflam, t_op, in items:
-for num_obs, win, season, cpoints, t_op, in items:
+for num_obs, win, season, cpoints, t_op, trial in items:
     t.cuda.empty_cache()
 
     # integrate for full time between each snapshot
@@ -95,8 +96,8 @@ for num_obs, win, season, cpoints, t_op, in items:
         science_binning=sb, device=device
     )
     # %% debug
-    mr = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing='log')
-    mr.proj = lambda coeffs: coeffs
+    mr = SphHarmSplineModel(grid, max_l=1, device=device, cpoints=cpoints, spacing='log')
+    mr.proj = lambda coeffs: coeffs # FIXME: I think this is unnecessary now
 
 
     # fr = f
@@ -112,15 +113,26 @@ for num_obs, win, season, cpoints, t_op, in items:
     ]
     # loss_fns = [CheaterLoss(truth)]
     loss_fns += [req_err := ReqErr(truth, m.grid, mr.grid, interval=100)]
+
+    # do a fast initialization reconstruction with L=0
+    mrinit = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing=mr.spacing)
+    initcoeffs = t.zeros(mr.coeffs_shape, device=device)
+    initcoeffs.data[:, 0:1], _, _ = gd(
+        fr, meas, mrinit, lr=5e0,
+        loss_fns=loss_fns, num_iterations=1000,
+    )
     # %% debug2
+    # do full reconstruction
     coeffs, retrieved_meas, losses = gd(
         fr, meas, mr, lr=5e0,
-        loss_fns=loss_fns, num_iterations=1000,
+        loss_fns=loss_fns, num_iterations=20000,
+        coeffs=initcoeffs,
     )
 
     # %% debug3
 
     retrieved = mr(coeffs)
+    # FIXME - ugly, get rid of this eventually
     # zero out retrieval/truth below 3Re
     retrieved3 = retrieved.clone().detach()
     retrieved3[mr.grid.r < 3] = 0
@@ -141,7 +153,7 @@ for num_obs, win, season, cpoints, t_op, in items:
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
-    desc = f'A00spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
+    desc = f'spline{cshape}L{mr.max_l}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}_shadow_trial{trial}'
 
     print('-----------------------------')
     print(desc)
@@ -156,6 +168,7 @@ for num_obs, win, season, cpoints, t_op, in items:
 
     # Img3 = lambda *a, **kw: Img(*a, *kw)
     fig_coeffs = []
+    # show special spherical harmonic coefficient plot if truth/retrieval model is sphharm
     if issubclass(type(m), SphHarmModel):
         fig_coeffs += [Figure("Truth Coeffs", Img(sphharmplot(m.sph_coeffs(coeffs_truth), m), height=300))]
     if issubclass(type(mr), SphHarmModel):
