@@ -1,0 +1,3 @@
+-e /home/evan/resources/sph_raytracer
+-e /home/evan/resources/ts_algorithms
+-e /home/evan/resources/dech

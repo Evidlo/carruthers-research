@@ -1,0 +1,13 @@
+pillow
+matplotlib
+ipython
+ipdb
+pandas
+openpyxl
+imageio
+xarray
+scikit-image
+sparse
+panel
+hvplot
+bokeh
