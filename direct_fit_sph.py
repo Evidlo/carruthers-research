@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# directly fit sph harm model to data
+# directly fit various reconstruction model to different datasets
+# this means there is no projection operator.  we are just directly fitting densities
+# which serves as a "best-case" guideline for checking whether reconstruction models
+# fit a particular dataset
 
-# import torch_optimizer as optim
 from itertools import product
 import matplotlib
 matplotlib.use('Agg')
@@ -24,7 +26,7 @@ grid = default_grid()
 truth_models = (
     # PratikModel(grid, device=device, season='spring'),
     # ZoennchenModel(device=device),
-    # GonzaloModel(grid, device=device),
+    GonzaloModel(grid, device=device),
     Zoennchen24Model(grid, device=device),
 )
 
@@ -38,20 +40,15 @@ recon_models = (
     # SplineModel(grid, (20, 50, 50), device=device),
     # SplineModel(grid, (30, 50, 50), device=device),
 
-    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20),
-    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=10, spacing='log'),
-    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20, spacing='log'),
-    # SphHarmSplineModel(grid, max_l=2, device=device, cpoints=30, spacing='log'),
-    # SphHarmSplineModel(grid, max_l=3, device=device, cpoints=20),
+    SphHarmSplineModel(grid, max_l=0, device=device, cpoints=, spacing='log'),
+    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=8, spacing='log'),
+    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=12, spacing='log'),
+    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=16, spacing='log'),
+    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20, spacing='log'),
     SphHarmSplineModel(grid, max_l=3, device=device, cpoints=8, spacing='log'),
     SphHarmSplineModel(grid, max_l=3, device=device, cpoints=12, spacing='log'),
     SphHarmSplineModel(grid, max_l=3, device=device, cpoints=16, spacing='log'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=30, spacing='log'),
-
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=8, spacing='lin'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=12, spacing='lin'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=16, spacing='lin'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=30, spacing='lin'),
+    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=20, spacing='log'),
 )
 
 figures = []
@@ -119,20 +116,12 @@ from glide.debug import warning_exception
 warning_exception()
 
 for truth_model in truth_models:
-    # c = model.default_coeffs()
-    # c = t.zeros(model.coeffs_shape, device=device)
-    # c[1, 0] = -1
-    # c[1, 1] = 1
-    # c[5, 1] = .0975
-    # c[clim:] = 0
-    # c[5] = 0
     truth = truth_model()
     truth[truth < 1] = 1
     grid = truth_model.grid
 
 
     for recon_model in recon_models:
-
 
         # create the loss and set to fidelity so it is minimized
         loss = CheaterLoss(truth)
