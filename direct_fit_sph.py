@@ -16,19 +16,31 @@ from glide.science.model_sph import *
 from glide.science.plotting_sph import carderr, cardplot
 from glide.science.plotting import sphharmplot
 
+from dominate_tags import Img
 import dominate
-from dominate.tags import style, div, figure, figcaption
+from dominate.tags import style, div, figure, figcaption, code, pre
 
 device = 'cuda'
 # grid = default_grid(spacing='log')
-grid = default_grid()
+grid = DefaultGrid(size_r=(3, 15))
 
 truth_models = (
     # PratikModel(grid, device=device, season='spring'),
     # ZoennchenModel(device=device),
-    GonzaloModel(grid, device=device),
-    Zoennchen24Model(grid, device=device),
+    # GonzaloModel(grid, device=device),
+    # Zoennchen24Model(grid, device=device),
+    # MSISModel(grid=grid, fill_value=0, num_times=1, window=14, device=device),
+    TIMEGCMModel(grid=grid, fill_value=0, num_times=1, window=14, device=device),
 )
+
+truth_models = [
+    TIMEGCMModel(
+        grid=grid, fill_value=0, num_times=1, window=14, device=device,
+        offset=np.timedelta64(houroffset, 'h')
+    )
+    for houroffset in np.arange(0, 10*24, 6)
+]
+
 
 recon_models = (
     # SphHarmModel(grid, max_l=2, device=device, monotonic=True),
@@ -40,88 +52,28 @@ recon_models = (
     # SplineModel(grid, (20, 50, 50), device=device),
     # SplineModel(grid, (30, 50, 50), device=device),
 
-    SphHarmSplineModel(grid, max_l=0, device=device, cpoints=, spacing='log'),
-    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=8, spacing='log'),
-    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=12, spacing='log'),
+    SphHarmSplineModel(grid, max_l=0, device=device, cpoints=16, spacing='log'),
+    SphHarmSplineModel(grid, max_l=1, device=device, cpoints=16, spacing='log'),
     SphHarmSplineModel(grid, max_l=2, device=device, cpoints=16, spacing='log'),
-    SphHarmSplineModel(grid, max_l=2, device=device, cpoints=20, spacing='log'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=8, spacing='log'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=12, spacing='log'),
     SphHarmSplineModel(grid, max_l=3, device=device, cpoints=16, spacing='log'),
-    SphHarmSplineModel(grid, max_l=3, device=device, cpoints=20, spacing='log'),
+    SphHarmSplineModel(grid, max_l=4, device=device, cpoints=16, spacing='log'),
+    SphHarmSplineModel(grid, max_l=5, device=device, cpoints=16, spacing='log'),
 )
 
 figures = []
 
-def Img(content, class_="", title=None, width=None, height=None, animation=False,
-        duration=3, rescale='frame', format=None):
-    from dominate.util import raw
-    from io import BytesIO
-    import imageio
-    import base64
-    # generate styling
-    styles = []
-    if type(width) is int:
-        width = f"{width}px"
-    if width is not None:
-        styles.append(f"width:{width}")
-    if type(height) is int:
-        height = f"{height}px"
-    if height is not None:
-        styles.append(f"height:{height}")
-
-    # if given path to image
-    if type(content) is str:
-        src = content
-
-    # if given matplotlib figure
-    elif type(content).__name__ == 'Figure':
-        buff = BytesIO()
-        format = format or 'png'
-        content.savefig(buff, format=format)
-        src = 'data:image/{};base64,{}'.format(
-            format,
-            base64.b64encode(buff.getvalue()).decode()
-        )
-
-    # if given numpy array
-    elif type(content).__name__ == 'ndarray':
-        buff = BytesIO()
-        styles.append("image-rendering:crisp-edges")
-        if animation:
-            format = format or 'gif'
-            buff = gif(content, duration=duration, rescale=rescale, format=format)
-            src = 'data:image/{};base64,{}'.format(
-                format,
-                base64.b64encode(buff.getvalue()).decode()
-            )
-        else:
-            format = format or 'png'
-            imageio.imsave(buff, content.astype('uint8'), format=format)
-            src = 'data:image/{};base64,{}'.format(
-                format,
-                base64.b64encode(buff.getvalue()).decode()
-            )
-
-    elif content is None:
-        src = ''
-
-    else:
-        raise TypeError(f"Unsupported object {type(content)}")
-
-    style = ";".join(styles)
-    return raw(f'<img class="{class_}" style="{style}" src="{src}"/>')
 
 from glide.debug import warning_exception
 warning_exception()
 
-for truth_model in truth_models:
+for n_t, truth_model in enumerate(truth_models):
     truth = truth_model()
     truth[truth < 1] = 1
     grid = truth_model.grid
 
 
-    for recon_model in recon_models:
+    for n_r, recon_model in enumerate(recon_models):
+        print(f'truth:{n_t}/{len(truth_models)}  recon:{n_r}/{len(recon_models)}')
 
         # create the loss and set to fidelity so it is minimized
         loss = CheaterLoss(truth)
@@ -134,7 +86,7 @@ for truth_model in truth_models:
             # lr=1e0,
             lr=1e2,
             # optimizer=(optimizer:=optim.Yogi),
-            loss_fns=[100 * loss],
+            loss_fns=[loss],
             # coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float32, requires_grad=True),
             coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
             device=device
@@ -146,18 +98,24 @@ for truth_model in truth_models:
             sphharm = ''
         figures.append(
             figure(
-                figcaption(f"truth={truth_model}, recon={recon_model}"),
+                figcaption(f"truth={truth_model}, recon={recon_model}, {truth_model.orig_grid.nptime}"),
                 div(
-                    Img(carderr(recon, truth, grid, grid), height=200),
+                    Img(carderr(recon.squeeze(), truth.squeeze(), grid, grid), height=200),
                     sphharm,
                     cls="imgcontainer"
                 )
             )
         )
 
+    figures.append(
+        figure(
+            figcaption(f"Truth {truth_model.orig_grid.nptime}"),
+            Img(cardplot(truth.squeeze(), grid))
+        )
+    )
+
 
 # %% plot
-f = Path(f'/srv/www/sph/direct_fit.html')
 
 doc = dominate.document('Direct Fit Sph')
 
@@ -167,8 +125,8 @@ with doc.head:
     style(f"""
         .gridcontainer {{
             display: grid;
-            grid-template-rows: {col_fmt};
-            grid-auto-flow: column;
+            grid-template-columns: {col_fmt};
+            grid-auto-flow: row;
         }}
         .inline {{
             display: inline
@@ -187,6 +145,8 @@ with doc.head:
 
 with doc:
     div(figures, cls='gridcontainer')
+    code(pre(open(__file__).read()))
 
+f = Path(f'/srv/www/direct_fit.html')
 f.write_text(doc.render())
 print(f'Saved to {f}')
