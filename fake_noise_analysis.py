@@ -126,9 +126,9 @@ fakes = frec.fake_noise(truthrec)
 real_nls = freal.noise(truth, disable_noise=True)
 reals = freal.noise(truth)
 real_alex_nls = freal.noise(truth, noise_engine='alex', disable_noise=True)
-real_alexs = freal.noise(truth, noise_engine='alex')
+# real_alexs = freal.noise(truth, noise_engine='alex')
 fake_alex_nls = freal.noise(truth, noise_engine='alexfake', disable_noise=True)
-fake_alexs = freal.noise(truth, noise_engine='alexfake')
+# fake_alexs = freal.noise(truth, noise_engine='alexfake')
 
 # desc = f'coldens{ual}{uno}_{gshapestr}_{grecshapestr}_newalbedo'
 # errfun = None
@@ -140,7 +140,7 @@ coldenserr(real_nls, fake_nls, fakes, outdir='/www/fake', errfun=errfun, outfile
 
 # image_stack(real_alex_nls, colorbar=True).save('/www/fake/reals_alex.gif')
 # image_stack(real_nls, colorbar=True).save('/www/fake/reals.gif')
-coldenserr2(real_alex_nls, real_nls, real_alex_nls, real_nls, outdir='/www/fake', outfile='realalex_realevan_nl')
+# coldenserr2(real_alex_nls, real_nls, real_alex_nls, real_nls, outdir='/www/fake', outfile='realalex_realevan_nl')
 coldenserr2(fake_alex_nls, real_nls, fake_alex_nls, real_nls, outdir='/www/fake', outfile='fakealex_realevan_nl')
 coldenserr2(fake_alex_nls, fake_nls, fake_alex_nls, fake_nls, outdir='/www/fake', outfile='fakealex_fakeevan_nl')
-coldenserr2(real_alex_nls, fake_nls, real_alex_nls, fake_nls, outdir='/www/fake', outfile='fakealex_fakeevan_nl')
+# coldenserr2(real_alex_nls, fake_nls, real_alex_nls, fake_nls, outdir='/www/fake', outfile='realalex_fakeevan_nl')
