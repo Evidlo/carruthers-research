@@ -43,7 +43,8 @@ density = m()
 # x = sim(sc, [8000 * np.ones((512, 512)), 8000 * np.ones((1024, 1024))])
 
 vol = default_vol(shape=100, size=50)
-f = ForwardSph(sc, grid, use_aniso=True, use_albedo=False)
+# vg = sum([NativeGeom(s) for s in sc])
+f = ForwardSph(sc, grid, use_aniso=True, use_albedo=True)
 
 # small_vol = default_vol(shape=100)
 
