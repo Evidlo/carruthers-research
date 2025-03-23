@@ -41,17 +41,12 @@ def meas_binerr(f, m, y_nois=None, y_less=None, y_trac=None):
     # err_nois_pc = (y_nois - y_anal) / divisor * 100
     # err_less_sq = (y_less - y_anal)**2
     # err_less_pc = (y_less - y_anal) / divisor * 100
+
     divisor = t.where(t.tensor(y_trac != 0), y_trac, float('inf'))
     err_nois_sq = (y_nois - y_trac)**2
     err_nois_pc = (y_nois - y_trac) / divisor * 100
     err_less_sq = (y_less - y_trac)**2
     err_less_pc = (y_less - y_trac) / divisor * 100
-
-    # FIXME: this is so bad!  why is this happening?
-    # err_nois_sq = np.nan_to_num(err_nois_sq, posinf=0, neginf=0)
-    # err_nois_pc = np.nan_to_num(err_nois_pc, posinf=0, neginf=0)
-    # err_less_sq = np.nan_to_num(err_less_sq, posinf=0, neginf=0)
-    # err_less_pc = np.nan_to_num(err_less_pc, posinf=0, neginf=0)
 
     # dont plot masked LOS
     err_nois_sq[f.proj_maskb==False] = float('nan')
@@ -61,23 +56,39 @@ def meas_binerr(f, m, y_nois=None, y_less=None, y_trac=None):
 
     rows = len(f.bvg)
     plt.close('all')
-    fig = plt.figure(figsize=(12, 2.5 * rows), dpi=200)
+    fig = plt.figure(figsize=(18, 2.5 * rows), dpi=200)
     for n in range(0, rows):
-        ax = plt.subplot(rows, 4, 4 * n + 1, projection='polar')
+        # number of plots
+        p = 6
+
+        ax = plt.subplot(rows, p, p * n + 1, projection='polar')
         image_stack(err_nois_sq[n], f.bvg[n], ax=ax, colorbar=True)
         plt.title(f'NoisyBinned/Traced Sq Err')
 
-        ax = plt.subplot(rows, 4, 4 * n + 2, projection='polar')
+        ax = plt.subplot(rows, p, p * n + 2, projection='polar')
         image_stack(err_less_sq[n], f.bvg[n], ax=ax, colorbar=True)
         plt.title(f'NoiselessBinned/Traced Sq Err')
 
-        ax = plt.subplot(rows, 4, 4 * n + 3, projection='polar')
+        ax = plt.subplot(rows, p, p * n + 3, projection='polar')
         image_stack(err_nois_pc[n], f.bvg[n], ax=ax, colorbar=True)
         plt.title(f'NoisyBinned/Traced % Err')
 
-        ax = plt.subplot(rows, 4, 4 * n + 4, projection='polar')
+        ax = plt.subplot(rows, p, p * n + 4, projection='polar')
         image_stack(err_less_pc[n], f.bvg[n], ax=ax, colorbar=True)
         plt.title(f'NoislessBinned/Traced % Err')
+
+        ax = plt.subplot(rows, p, p * n + 5, projection='3d')
+        # f.op.plot(geom=f.bvg[n], ax=ax)
+        f.bvg[n].plot(ax=ax)
+        plt.title(f'Viewing Geometry')
+
+        ax = plt.subplot(rows, p, p * n + 6)
+        plt.plot(y_trac[n, :, 0], label='Traced')
+        plt.plot(y_less[n, :, 0], label='Noiseless')
+        plt.legend()
+        plt.xlabel('Radial Bin')
+        plt.ylabel('Col. Dens')
+        plt.title('Radial Profile')
 
     fig.tight_layout()
     return fig
