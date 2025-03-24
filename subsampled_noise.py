@@ -29,17 +29,17 @@ sc = gen_mission(num_obs=1, cams=cams)
 items = product(
     [
         DefaultGrid((200, 45, 60), spacing='log'),
-        DefaultGrid((100, 45, 60), spacing='log'),
+        # DefaultGrid((100, 45, 60), spacing='log'),
     ],
-    ['lin', 'log'],
+    ['lin'],
     product(
-        [100],
-        [50, 100],
+        [25],
+        [25, 50],
         # [25 * r for r in range(2, 3)],
         # [25 * th for th in range(4, 5)]
 ))
 for g, spacing, shape in items:
-    desc_str = f'viewgeom:{shape} {spacing}       grid:{g.shape} {g.spacing}'
+    desc_str = f'[viewgeom:{shape} {spacing}] [grid:{g.shape} {g.spacing}]'
     print(f'----- {desc_str} -----')
 
     m = Zoennchen00Model(g)
