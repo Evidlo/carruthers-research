@@ -58,10 +58,14 @@ f = ForwardSph(sc, grid, device=device)
 num_atoms = 6
 m = SphHarmSplineModel(grid, max_l=2, cpoints=16, device=device, extra_channels=[num_atoms])
 
-weights = t.zeros(m.coeffs_shape, **spec)
+# random init method
+weights = t.rand(m.coeffs_shape, **spec)
+
+# ones rows init method
+# weights = t.zeros(m.coeffs_shape, **spec)
 # initialize weights with weights[l==atom_num] = 1
-for atom in range(num_atoms):
-    weights[atom, m.l == atom, :] = 1
+# for atom in range(num_atoms):
+#     weights[atom, m.l == atom, :] = 1
 
 # SVD init method
 """
@@ -117,7 +121,6 @@ from dictionary_learning_losses import *
 t.cuda.empty_cache()
 
 
-"""
 coeffs = t.ones((dm.grid.shape.t, mr.coeffs_shape), requires_grad=True, **spec)
 num_iterations = 600
 progress_bar = True
@@ -159,7 +162,6 @@ try:
 # allow user to stop iterations
 except KeyboardInterrupt:
     pass
-"""
 
 # %% plot
 
