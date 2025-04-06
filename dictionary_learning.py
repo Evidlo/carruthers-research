@@ -7,8 +7,6 @@ conditioning for a particular forward operator
 cost = sum_i  ||xᵢ - DWcᵢ||₂² + λ ||FDW||_f²
 """
 
-
-
 from glide.science.forward_sph import ForwardSph, ScienceGeom, NativeGeom
 from glide.common_components.camera import CameraL1BWFI, CameraL1BNFI
 from glide.common_components.cam import nadir_wfi_mode, nadir_nfi_mode
@@ -22,11 +20,7 @@ from sph_raytracer.retrieval import gd
 from sph_raytracer.plotting import image_stack
 
 import torch as t
-from dominate_tags import *
 import math
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
 
 # ----- Problem Setup -----
 
@@ -131,26 +125,41 @@ best_coeffs = None
 
 optim = t.optim.Adam([coeffs, weights], lr=1e-1)
 # perform requested number of iterations
-o_stat = 0
+f_meas = f(dataset)
 try:
     from tqdm import tqdm
     for _ in (pbar := tqdm(range(num_iterations), disable=not progress_bar)):
         optim.zero_grad()
 
-        # fidelity
-        f_loss = t.mean((dataset - mr(coeffs))**2)
+        # --- fidelity term ---
+        # (y - FDWc)_2^2
+        # f_result = t.mean((f_meas - f(mr(coeffs)))**2)
+        # (y - FDWc)_f^2
+        # f_result = t.linalg.norm(f_meas.flatten(-3) - f(mr(coeffs)).flatten(-3), ord='fro')**2
+        # f_loss = 1 * f_result / (math.prod(f.range_shape) * mr.num_atoms)
 
-        # condition number
-        meas = f(mr()).flatten(start_dim=-3)
-        result = t.linalg.norm(meas, ord='fro')
+        f_result = t.mean((dataset - mr(coeffs))**2)
+        f_loss = 1 * f_result / math.prod(dm.grid.shape)
+
+
+        # --- regularization term ---
+        # r_meas = f(mr()).flatten(start_dim=-3)
+        # r_result = t.linalg.norm(r_meas, ord='fro')**2
         # normalize loss by number of LOS, dict
-        r_loss = 1e-2 * result / math.prod(f.range_shape) * mr.num_atoms
+        # r_loss = 1e-2 * r_result / math.prod(f.range_shape) * mr.num_atoms
 
-        s_loss = 0
+        r_loss = 0
+        # r_loss = 1e2 * t.mean(-coeffs.clip(max=0))
+
+        # --- sparsity term ---
+        # s_loss = 0
+        # ||W||_1
+        s_result = t.abs(weights).sum()
+        s_loss = 1e-4 * s_result / math.prod(weights.shape)
 
         tot_loss = f_loss + r_loss + s_loss
 
-        pbar.set_description(f'F:{f_loss:.1e} C:{r_loss:.1e} S:{s_loss:.1e}')
+        pbar.set_description(f'F:{f_loss:.1e} R:{r_loss:.1e} S:{s_loss:.1e}')
 
         # save the reconstruction with the lowest loss
         if tot_loss < best_loss:
@@ -163,21 +172,37 @@ try:
 except KeyboardInterrupt:
     pass
 
+# ----- Plotting -----
 # %% plot
 
+from dominate_tags import *
+import matplotlib.pyplot as plt
+import matplotlib
+plt.close('all')
+matplotlib.use('Agg')
 
 
-with document('Dictionary Larnin') as d:
-    recons = mr()
-    with itemgrid(len(recons), flow='column'):
-        for n, (weight, recon) in enumerate(zip(weights, recons)):
+with document('Dictionary Learning') as d:
+    l_bases = mr() # learned 3D bases
+    with itemgrid(len(l_bases), flow='column'):
+        for n, (weight, l_basis) in enumerate(zip(weights, l_bases)):
             print(n)
             plt.close()
             caption(
-                f"Figgur {n}",
-                plot(cardplot(recon, mr.grid), height="300px"),
+                f"Figure {n}",
+                plot(cardplot(l_basis, mr.grid), height="300px"),
                 plot(sphharmplot(m.sph_coeffs(weight), m), height="300px"),
                 plot(image_stack(y_weights[n, 0], f.rvg[0]))
             )
+    n = 0 # look at nth result in stack
+    recon = mr(coeffs)[n]
+    recon_coeffs = t.einsum('w...,tw->t...', weights, coeffs)[n]
+    caption(
+        "Sum",
+        plot(cardplot(recon, mr.grid), height="300px"),
+        plot(sphharmplot(m.sph_coeffs(recon_coeffs), m), height="300px"),
+    )
+    tags.pre(open('dictionary_learning.py', 'r').read())
 
-open('/www/dictionary.html', 'w').write(d.render())
+open(outfile:='/www/dictionary3.html', 'w').write(d.render())
+print(f'Wrote {outfile}')
