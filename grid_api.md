@@ -1,6 +1,6 @@
 This is an enumeration of SphericalGrid use cases to improve their ergonomics.
 
-Each heading is a usage scenario and each code block is a potential solution for that scenario.  
+Each heading is a usage scenario and each code block is a potential solution for that scenario. Scenarios marked with `[x]` are considered as having satisfactory solution.
 
 # [x] Load dataset and trim only radial extent to (3, 15) Re
 
@@ -17,7 +17,7 @@ m = TIMEGCMModel()
 m = TIMEGCMModel(m.grid.trim(r=3, 15))
 ```
 
-- _add trim argument to SphericalGrid_
+- TODO: add trim argument to SphericalGrid
 
 # [x] Load dataset at 6 hour cadence
 
@@ -25,7 +25,7 @@ m = TIMEGCMModel(m.grid.trim(r=3, 15))
 m = TIMEGCMModel(period=np.timedelta64(6, 'h'))
 ```
 
-- _add period argument to DataDynamicModel_
+- TODO: add period argument to DataDynamicModel
 
 # Load dataset at 6 hour cadence and default grid
 
@@ -42,7 +42,7 @@ m = TIMEGCMModel(period=np.timedelta64(6, 'h'))
 grid = DefaultGrid().makedynamic(m.grid.t)
 ```
 
-- _add makedynamic(...) to SphericalGrid_
+- TODO: add makedynamic(...) to SphericalGrid
 
 # [x] Load dataset at specific times
 
@@ -72,4 +72,4 @@ m = TIMEGCMModel(grid, offset=np.timedelta(1, 'W'))
   - I don't think Datadynamicmodel works this way
   - Have notes about making this change to handle time first for efficiency
   
-- _process time args first on DataDynamicModel_
+- TODO: process time args first on DataDynamicModel
