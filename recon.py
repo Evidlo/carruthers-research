@@ -42,13 +42,13 @@ items = product(
     # [1e2], # difflam
     [16], # cpoints
     [360], # integration time
-    np.arange(10), #trial
+    [3]
 )
 # items = [['spring', 1e-1]]
 
 # for season, difflam, t_op in items:
 # for num_obs, win, season, difflam, t_op, in items:
-for num_obs, win, season, cpoints, t_op, trial in items:
+for num_obs, win, season, cpoints, t_op, L in items:
     t.cuda.empty_cache()
 
     # integrate for full time between each snapshot
@@ -59,20 +59,24 @@ for num_obs, win, season, cpoints, t_op, trial in items:
         CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
     ]
     sc = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams)
-    # sc = gen_mission(num_obs=30, orbit=circular_orbit, cams=cams)
+    # sc = gen_mission(num_obs=num_obs, orbit=circular_orbit, cams=cams)
 
     # m = PratikModel(grid=None, date=season, rlim=(3, 25), device=device); mstr = 'pratik'
     # m = GonzaloModel(grid=None, device=device); mstr = 'gonzalo'
-    grid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
-    m = Zoennchen24Model(grid=grid, device=device); mstr = 'zoennchen'
+    sgrid = DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log')
+    rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
+    m = Zoennchen24Model(grid=sgrid, device=device); mstr = 'zoennchen'
+    # m = TIMEGCMModel(grid=grid, device=device, offset=np.datetime64(10, 'D')); mstr = 'TIMEGCM'
     truth = m()
 
     # cal = Calibrator(..., scene=Scene(iph=False))
 
+    print('----- Measurement Forward Model -----')
     f = ForwardSph(
-        sc, m.grid, # calibrator=cal
+        sc, sgrid=m.grid, # calibrator=cal
+        rgrid=rgrid,
         use_albedo=(ual:=True), use_aniso=(uan:=True), use_noise=(uno:=True),
-        science_binning=(sb:=True), device=device
+        device=device
     )
 
 
@@ -82,30 +86,23 @@ for num_obs, win, season, cpoints, t_op, trial in items:
     # meas = f(truth); noise_type = 'noiseless
     # meas = f.fake_noise(truth); noise_type='fake'
 
-    del f
-
     # ----- Retrieval -----
     #%% recon
     # mr = FullyDenseModel(m.grid)
     # choose a model for retrieval
     # mr = SphHarmModel(default_grid(size_r=m.grid.size.r, shape=(49, 1, 3)), max_l=3, device=device)
     # mr = SphHarmModel(grid, device=device, max_l=3)
-    fr = ForwardSph(
-        sc, grid,
-        use_albedo=ual, use_aniso=uan, use_noise=uno,
-        science_binning=sb, device=device
-    )
+    print('----- Recon. Forward Model -----')
     # %% debug
-    mr = SphHarmSplineModel(grid, max_l=1, device=device, cpoints=cpoints, spacing='log')
+    mr = SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
     mr.proj = lambda coeffs: coeffs # FIXME: I think this is unnecessary now
 
 
-    # fr = f
     # choose loss functions and regularizers with weights
     loss_fns = [
-        # 1 * SquareLoss(projection_mask=fr.pm),
-        1 * AbsLoss(projection_mask=fr.pm),
-        # 1e2 * SquareRelLoss(projection_mask=fr.pm),
+        # 1 * SquareLoss(projection_mask=f.proj_maskb),
+        1 * AbsLoss(projection_mask=f.proj_maskb),
+        # 1e2 * SquareRelLoss(projection_mask=f.proj_maskb),
         1e4 * NegRegularizer(),
         # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='sq_diff_log')
         # differr:=1e-1 * DiffLoss(mr.grid, mode='density', device=device, _reg='gshp_diff_log')
@@ -115,17 +112,17 @@ for num_obs, win, season, cpoints, t_op, trial in items:
     loss_fns += [req_err := ReqErr(truth, m.grid, mr.grid, interval=100)]
 
     # do a fast initialization reconstruction with L=0
-    mrinit = SphHarmSplineModel(grid, max_l=0, device=device, cpoints=cpoints, spacing=mr.spacing)
+    mrinit = SphHarmSplineModel(rgrid, max_l=0, device=device, cpoints=cpoints, spacing=mr.spacing)
     initcoeffs = t.zeros(mr.coeffs_shape, device=device)
-    initcoeffs.data[:, 0:1], _, _ = gd(
-        fr, meas, mrinit, lr=5e0,
+    initcoeffs.data[0:1, :], _, _ = gd(
+        f, meas, mrinit, lr=5e0,
         loss_fns=loss_fns, num_iterations=1000,
     )
     # %% debug2
     # do full reconstruction
     coeffs, retrieved_meas, losses = gd(
-        fr, meas, mr, lr=5e0,
-        loss_fns=loss_fns, num_iterations=20000,
+        f, meas, mr, lr=5e0,
+        loss_fns=loss_fns, num_iterations=10000,
         coeffs=initcoeffs,
     )
 
@@ -141,8 +138,8 @@ for num_obs, win, season, cpoints, t_op, trial in items:
     maxerr = float(req_err(None, None, retrieved3, None))
 
     # compute measurement errors
-    meas = meas * fr.pm
-    retrieved_meas = retrieved_meas * fr.pm
+    meas = meas * f.proj_maskb
+    retrieved_meas = retrieved_meas * f.proj_maskb
     nonzero = meas != 0
     retrieved_meas_error = t.zeros_like(meas)
     retrieved_meas_error[nonzero] = (retrieved_meas - meas)[nonzero] / meas[nonzero]
@@ -153,7 +150,7 @@ for num_obs, win, season, cpoints, t_op, trial in items:
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
     # desc = desc.format(noise_type=noise_type)
     # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
-    desc = f'spline{cshape}L{mr.max_l}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}_shadow_trial{trial}'
+    desc = f'spline{cshape}L{mr.max_l}_{num_obs:02d}obs'
 
     print('-----------------------------')
     print(desc)
@@ -184,7 +181,7 @@ for num_obs, win, season, cpoints, t_op, trial in items:
                 #     f'{maxerr=}',
                 # ]))
                 Figure("Loss", Img(loss_plot(losses))),
-                HTML(fr.op.plot().to_jshtml())
+                HTML(f.op.plot().to_jshtml())
             ],
             [
                 Figure("Relative Err. (min. grid)", Img3(carderrmin(retrieved3, mr.grid, m.__class__))),
@@ -201,9 +198,9 @@ for num_obs, win, season, cpoints, t_op, trial in items:
                 # Figure("Truth Obs", Img(meas.cpu(), animation=True, format='gif')),
                 # Figure("Recon Obs", Img(retrieved_meas.cpu(), animation=True, format='gif')),
                 # Figure("Percent Err Obs", Img(retrieved_meas_error.cpu(), animation=True, format='gif')),
-                # Figure("Truth Obs", HTML(image_stack(meas.cpu(), fr.vg).to_jshtml())),
-                # Figure("Recon Obs", HTML(image_stack(retrieved_meas.cpu(), fr.vg).to_jshtml())),
-                # Figure("Percent Err Obs", HTML(image_stack(retrieved_meas_error.cpu(), fr.vg).to_jshtml()))
+                # Figure("Truth Obs", HTML(image_stack(meas.cpu(), f.vg).to_jshtml())),
+                # Figure("Recon Obs", HTML(image_stack(retrieved_meas.cpu(), f.vg).to_jshtml())),
+                # Figure("Percent Err Obs", HTML(image_stack(retrieved_meas_error.cpu(), f.vg).to_jshtml()))
             ],
             Code(code),
             # Code(inspect.getsource(differr.compute))
