@@ -39,20 +39,21 @@ sgrid = DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log')
 rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 
 truth_models = [
-      Zoennchen24Model(grid=sgrid, device=device),
-         Pratik25Model(grid=sgrid, num_times=1, device=device),
+      # Zoennchen24Model(grid=sgrid, device=device),
+      #    Pratik25Model(grid=sgrid, num_times=1, device=device),
     Pratik25StormModel(grid=sgrid, num_times=1, device=device),
-          TIMEGCMModel(grid=sgrid, num_times=1, device=device),
-          TIMEGCMModel(grid=sgrid, num_times=1, device=device, offset=10),
-             MSISModel(grid=sgrid, num_times=1, device=device),
+          # TIMEGCMModel(grid=sgrid, num_times=1, device=device),
+          # TIMEGCMModel(grid=sgrid, num_times=1, device=device, offset=10),
+          #    MSISModel(grid=sgrid, num_times=1, device=device),
 ]
 
 # L_opts = (0, 1) # sph harm spline order
-L_opts = (1,) # sph harm spline order
-c_opts = (8, 12, 16) # sph harm spline control points
+L_opts = [0] # sph harm spline order
+c_opts = [16] # sph harm spline control points
+trials = range(100)
 recon_models = [
     SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
-    for L, cpoints in product(L_opts, c_opts)
+    for L, cpoints, _ in product(L_opts, c_opts, trials)
 ]
 
 # ----- Measurement Generation -----
@@ -62,7 +63,6 @@ num_obs=1; duration=14
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
 sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=cams)
 
-print('----- Measurement Forward Model -----')
 f = ForwardSph(
     sc, sgrid=sgrid, # calibrator=cal
     rgrid=rgrid,
@@ -72,13 +72,20 @@ f = ForwardSph(
 
 # %% recon
 
+saved = {}
+saved['recons'] = []
+saved['rel_err'] = []
+
 with document('Snapshot Retrievals') as doc:
 
     # iterate ground truths
     for nt, mt in enumerate(truth_models):
+        print('=============================================================')
+        print(mt)
+        print('=============================================================')
 
         truth = mt()
-        meas = f.noise(truth)
+        saved['truth'] = truth
 
         truth_figs = []
 
@@ -86,11 +93,11 @@ with document('Snapshot Retrievals') as doc:
         with itemgrid(len(c_opts), flow='row'):
 
             for nr, mr in enumerate(recon_models):
-                cshape = 'x'.join(map(str, mr.coeffs_shape))
                 desc = f'spline_c{mr.cpoints}_L{mr.max_l}_{num_obs:02d}obs'
-                print('-----------------------------')
-                print(desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}')
-                print('-----------------------------')
+                print('---', desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}', '---')
+
+                meas = f.noise(truth)
+                cshape = 'x'.join(map(str, mr.coeffs_shape))
                 t.cuda.empty_cache()
 
                 # ----- Retrieval -----
@@ -116,6 +123,7 @@ with document('Snapshot Retrievals') as doc:
                 truth3 = truth.clone().detach()
                 truth3[mt.grid.r < 3] = 0
 
+                saved['recons'].append(retrieved3)
 
 
                 if issubclass(type(mr), SphHarmModel):
@@ -124,18 +132,41 @@ with document('Snapshot Retrievals') as doc:
                     sphharm = ''
                 caption(
                     f"recon={mr}",
-                    plot(carderr(retrieved3.squeeze(), truth3.squeeze(), rgrid, sgrid), height=200),
+                    plot(fig:=carderr(retrieved3.squeeze(), truth3.squeeze(), rgrid, sgrid), height=200),
                     sphharm,
                     # FIXME
                     # plot(loss_plot(losses)),
                     # plot(cardplotaxes(recon.squeeze(), grid)),
                     # plot(cardplotaxes(truth.squeeze(), grid)),
                 )
+                saved['rel_err'].append(fig.locals.rel_err)
+
+    caption(
+        "Mean/Std reconstruction of all trials",
+        plot(cardplot(t.mean(t.stack(saved['recons']), dim=0), mr.grid)),
+        plot(cardplot(t.std(t.stack(saved['recons']), dim=0), mr.grid)),
+    )
+    caption(
+        'Ground truth',
+        plot(cardplot(truth, mt.grid))
+    )
+    caption(
+        "Mean/Std reconstruction of all trials",
+        plot(cardplotaxes(t.mean(t.stack(saved['recons']), dim=0), mr.grid)),
+        plot(cardplotaxes(t.std(t.stack(saved['recons']), dim=0), mr.grid)),
+    )
+    caption(
+        'Ground truth',
+        plot(cardplotaxes(truth, mt.grid))
+    )
 
     tags.code(tags.pre(open('recon_snapshot.py').read()))
 
+import pickle
+pickle.dump({'truth': truth, 'saved':saved}, open('/www/recon_snapshot.pkl', 'wb'))
+
 # %% plot
 # f = Path(f'/www/lara/direct_fit.html')
-outfile = Path(f'/www/sph/snapshot_debug.html')
+outfile = Path(f'/www/sph/snapshot_montecarlo.html')
 outfile.write_text(doc.render())
 print(f'Saved to {outfile}')
