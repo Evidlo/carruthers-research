@@ -4,6 +4,8 @@ from glide.science.model_sph import *
 from glide.science.plotting_sph import cardplot, cardplotaxes
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
@@ -43,15 +45,16 @@ plot = functools.partial(plot, height="300px")
 # ----- Plotting -----
 # %% plot
 
+plt.close('all')
 
 def plot_YZ_circ(x, grid):
-    """Create lineplot at 10Re circle in YZ plane
+    """Create lineplot at constant altitude circle in YZ plane
 
     Args:
         x (tensor): density data
         grid (SphericalGrid)
     """
-    # get index of 10 Re shell
+    # get index of `rval` Re shell
     r10_ind = t.searchsorted(grid.r, rval:=6)
     # get index of ±Y azimuth
     aY_ind = t.searchsorted(grid.a, np.pi/2)
@@ -117,5 +120,6 @@ with document('Pratik model bug') as d:
         plot(cardplotaxes(xcubi.squeeze(), mcubi.grid, yscale='log', method='nearest'))
     )
 
+    tags.pre(open('pratik25model_discont_bug.py', 'r').read())
 
-# open('/www/lara/pratik25model_discont.html', 'w').write(d.render())
+open('/www/lara/pratik25model_discont.html', 'w').write(d.render())
