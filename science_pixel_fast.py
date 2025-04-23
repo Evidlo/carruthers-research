@@ -9,21 +9,37 @@ import matplotlib
 matplotlib.use('Agg')
 
 from glide.common_components.science_pixel_binning import SciencePixelBinning
+from glide.science.model_sph import Zoennchen00Model, DefaultGrid
+from glide.common_components.spacecraft import SpaceCraft
+from glide.common_components.camera import CameraL1BWFI, CameraL1BNFI
+from glide.science.forward_sph import NativeGeom, ScienceGeom
 from sph_raytracer.plotting import *
 
 from skimage.transform import warp_polar, warp
 
+scishape = np.array((100, 50))
+
+m = Zoennchen00Model(DefaultGrid())
+sc = SpaceCraft('2025-12-24', sensors=[CameraL1BWFI()])
+# sc = SpaceCraft('2025-12-24', sensors=[CameraL1BNFI()])
+N = sc.sensor.npix
+sgeom = ScienceGeom(sc, scishape)
+ngeom = NativeGeom(sc)
+
+meas_tru = m.analytic(sgeom).numpy()
+meas_nat = m.analytic(ngeom).numpy()
+
 # load pregenerated measurements from file
 d = np.load('science_pixel_fast.npy', allow_pickle=True)
 meas_wfi, meas_nfi = d.item().get('wfi'), d.item().get('nfi')
-
-N = 1024; meas_data = meas_nfi
+# N = 1024; meas_data = meas_nfi
 # N = 512; meas_data = meas_wfi
-scishape = np.array((50, 100))
+
 shape = np.array((N, N))
 center = shape / 2
 coords = np.stack(np.meshgrid(*(np.arange(s) for s in shape), indexing='ij'), axis=-1)
-meas = meas_data
+# meas = meas_data
+meas = meas_nat
 # meas = np.zeros(shape)
 # meas[6+N//2, :] = 1
 # meas = np.linalg.norm(coords - center, axis=-1)
@@ -36,7 +52,8 @@ meas = meas_data
 
 
 with Timer(prefix='Original') as p:
-    sb = SciencePixelBinning(N, scishape, rlim=(0, N/2), normalize=True)
+    # sb = SciencePixelBinning(N, scishape, rlim=(0, N/2), normalize=True)
+    sb = sgeom.bin
 
     meas_sb = sb(meas[None])
 
@@ -96,24 +113,46 @@ with Timer(prefix='Fast') as p:
 err = np.divide((meas_warp - meas_sb), meas_sb, where=meas_sb!=0) * 100
 err = np.where(meas_sb>1e-5, err, 0)
 
-plt.close('all')
+err_warp = np.divide((meas_warp - meas_tru), meas_tru, where=meas_tru!=0) * 100
+err_warp = np.where(meas_tru>1e-5, err_warp, 0)
 
-plt.figure(dpi=200, figsize=(18, 6))
+err_sb = np.divide((meas_sb - meas_tru), meas_tru, where=meas_tru!=0) * 100
+err_sb = np.where(meas_tru>1e-5, err_sb, 0)
+
+plt.close('all')
+cmap = plt.get_cmap('seismic')
+cmap.set_bad(color='black')
+
+plt.figure(dpi=200, figsize=(12, 12))
 
 plt.subplot(2, 3, 1)
-plt.title('Orig')
-plt.imshow(meas)
+plt.title('Science/Truth % Error')
+plt.imshow(err_sb, vmin=-2, vmax=2, cmap=cmap)
+plt.colorbar()
+
+plt.subplot(2, 3, 2)
+plt.title('Warp/Truth % Error')
+plt.imshow(err_warp, vmin=-2, vmax=2, cmap=cmap)
+plt.colorbar()
+
+plt.subplot(2, 3, 3)
+plt.title('Truth')
+plt.imshow(meas_tru, norm=LogNorm())
+plt.colorbar()
+
 plt.subplot(2, 3, 4)
 plt.title('Science')
 plt.imshow(meas_sb, norm=LogNorm())
 plt.colorbar()
+
 plt.subplot(2, 3, 5)
 plt.title('Warp')
 plt.imshow(meas_warp, norm=LogNorm())
 plt.colorbar()
+
 plt.subplot(2, 3, 6)
-plt.title('Error %')
-plt.imshow(err, vmin=-2, vmax=2, cmap='seismic')
+plt.title('% Error')
+plt.imshow(err, vmin=-2, vmax=2, cmap=cmap)
 plt.colorbar()
 
 plt.tight_layout()
