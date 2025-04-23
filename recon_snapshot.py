@@ -141,23 +141,24 @@ with document('Snapshot Retrievals') as doc:
                 )
                 saved['rel_err'].append(fig.locals.rel_err)
 
+    from matplotlib.colors import LogNorm
     caption(
         "Mean/Std reconstruction of all trials",
-        plot(cardplot(t.mean(t.stack(saved['recons']), dim=0), mr.grid)),
-        plot(cardplot(t.std(t.stack(saved['recons']), dim=0), mr.grid)),
+        plot(cardplot(t.mean(t.stack(saved['recons']), dim=0), mr.grid, norm=LogNorm())),
+        plot(cardplot(t.std(t.stack(saved['recons']), dim=0), mr.grid, norm=LogNorm())),
     )
     caption(
         'Ground truth',
-        plot(cardplot(truth, mt.grid))
+        plot(cardplot(truth, mt.grid, norm=LogNorm()))
     )
     caption(
         "Mean/Std reconstruction of all trials",
-        plot(cardplotaxes(t.mean(t.stack(saved['recons']), dim=0), mr.grid)),
-        plot(cardplotaxes(t.std(t.stack(saved['recons']), dim=0), mr.grid)),
+        plot(cardplotaxes(t.mean(t.stack(saved['recons']), dim=0), mr.grid, yscale='log')),
+        plot(cardplotaxes(t.std(t.stack(saved['recons']), dim=0), mr.grid, yscale='log')),
     )
     caption(
         'Ground truth',
-        plot(cardplotaxes(truth, mt.grid))
+        plot(cardplotaxes(truth, mt.grid, yscale='log'))
     )
 
     tags.code(tags.pre(open('recon_snapshot.py').read()))
