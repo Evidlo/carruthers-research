@@ -77,7 +77,7 @@ with document('Two Week Retrievals') as doc:
         print('=============================================================')
 
         truth = mt()
-        meas = f.noise(truth)
+        meas = f.calibrate(f.simulate(truth))
 
         truth_figs = []
 

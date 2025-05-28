@@ -50,7 +50,7 @@ truth_models = [
 # L_opts = (0, 1) # sph harm spline order
 L_opts = [0] # sph harm spline order
 c_opts = [16] # sph harm spline control points
-trials = range(100)
+trials = range(10)
 recon_models = [
     SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
     for L, cpoints, _ in product(L_opts, c_opts, trials)
@@ -58,7 +58,7 @@ recon_models = [
 
 # ----- Measurement Generation -----
 
-t_op = 360
+t_op = 30
 num_obs=1; duration=14
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
 sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=cams)
@@ -66,7 +66,6 @@ sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=ca
 f = ForwardSph(
     sc, sgrid=sgrid, # calibrator=cal
     rgrid=rgrid,
-    use_albedo=(ual:=True), use_aniso=(uan:=True), use_noise=(uno:=True),
     device=device
 )
 
@@ -96,7 +95,7 @@ with document('Snapshot Retrievals') as doc:
                 desc = f'spline_c{mr.cpoints}_L{mr.max_l}_{num_obs:02d}obs'
                 print('---', desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}', '---')
 
-                meas = f.noise(truth)
+                meas = f.calibrate(f.simulate(truth))
                 cshape = 'x'.join(map(str, mr.coeffs_shape))
                 t.cuda.empty_cache()
 
@@ -106,7 +105,8 @@ with document('Snapshot Retrievals') as doc:
                 loss_fns = [
                     1 * AbsLoss(projection_mask=f.proj_maskb),
                     1e4 * NegRegularizer(),
-                    ReqErr(truth, mt.grid, mr.grid, interval=100)
+                    ReqErr(truth, mt.grid, mr.grid, interval=100),
+                    1e0 * SphHarmL1Regularizer(mr),
                 ]
 
                 # do full reconstruction
@@ -116,15 +116,11 @@ with document('Snapshot Retrievals') as doc:
                 )
 
                 retrieved = mr(coeffs)
-                # FIXME - ugly, get rid of this eventually
-                # zero out retrieval/truth below 3Re
-                retrieved3 = retrieved.clone().detach()
-                retrieved3[mr.grid.r < 3] = 0
-                truth3 = truth.clone().detach()
-                truth3[mt.grid.r < 3] = 0
 
-                saved['recons'].append(retrieved3)
+                saved['recons'].append(retrieved)
 
+                # figure settings
+                figset = {'height': 200}
 
                 if issubclass(type(mr), SphHarmModel):
                     sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), height=200)
@@ -132,12 +128,17 @@ with document('Snapshot Retrievals') as doc:
                     sphharm = ''
                 caption(
                     f"recon={mr}",
-                    plot(fig:=carderr(retrieved3.squeeze(), truth3.squeeze(), rgrid, sgrid), height=200),
+                    plot(fig:=carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), height=200),
                     sphharm,
-                    # FIXME
-                    # plot(loss_plot(losses)),
-                    # plot(cardplotaxes(recon.squeeze(), grid)),
-                    # plot(cardplotaxes(truth.squeeze(), grid)),
+                    tags.br(),
+                    tags.details(
+                        tags.summary(),
+                        plot(loss_plot(losses), **figset),
+                        caption("Recon", plot(cardplot(retrieved.squeeze(), rgrid, norm='log'), **figset)),
+                        caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
+                        caption("Recon", plot(cardplotaxes(retrieved.squeeze(), rgrid, yscale='log'), **figset)),
+                        caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
+                    )
                 )
                 saved['rel_err'].append(fig.locals.rel_err)
 
@@ -168,6 +169,6 @@ pickle.dump({'truth': truth, 'saved':saved}, open('/www/recon_snapshot.pkl', 'wb
 
 # %% plot
 # f = Path(f'/www/lara/direct_fit.html')
-outfile = Path(f'/www/sph/snapshot_montecarlo.html')
+outfile = Path(f'/www/sph/snapshot_montecarlo_debug.html')
 outfile.write_text(doc.render())
 print(f'Saved to {outfile}')
