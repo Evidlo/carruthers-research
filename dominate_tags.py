@@ -63,6 +63,12 @@ def plot(content, title=None, format=None, matkwargs={}, **kwargs):
 
 
 def caption(title, *args, flow='row', **kwargs):
+    """Wraps a set of elements in a <figure> w/ <figcaption>
+
+    Args:
+        title (str): title to put in figcaption
+        *args (list[...]): list of items to put in figure
+    """
     kwargs['style'] = f"""
     display: inline-flex;
     flex-direction: {flow};
