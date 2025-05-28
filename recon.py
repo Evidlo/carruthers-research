@@ -41,11 +41,11 @@ rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 truth_models = [
     Zoennchen24Model(grid=sgrid, device=device),
     Pratik25Model(grid=sgrid, num_times=1, device=device),
-    TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value=0)
+    TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
 ]
 
-L_opts = [2, 3] # sph harm spline order
-c_opts = [12, 16] # sph harm spline control points
+L_opts = [1, 2, 3] # sph harm spline order
+c_opts = [6, 8, 12, 16] # sph harm spline control points
 recon_models = [
     SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
     for L, cpoints in product(L_opts, c_opts)
@@ -54,7 +54,7 @@ recon_models = [
 # ----- Measurement Generation -----
 
 t_op = 360
-num_obs=10; duration=14
+num_obs=14; duration=14
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
 sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=cams)
 
@@ -63,7 +63,6 @@ f = ForwardSph(
     rgrid=rgrid,
     # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
     rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
-    use_albedo=(ual:=True), use_aniso=(uan:=True), use_noise=(uno:=True),
     device=device
 )
 
@@ -93,15 +92,12 @@ with document('Two Week Retrievals') as doc:
                 t.cuda.empty_cache()
 
                 # ----- Retrieval -----
-                # %% retr
-
                 # choose loss functions and regularizers with weights
                 loss_fns = [
                     1 * AbsLoss(projection_mask=f.proj_maskb),
                     1e4 * NegRegularizer(),
+                    1e1 * SphHarmL1Regularizer(mr),
                     ReqErr(truth, mt.grid, mr.grid, interval=100),
-                    1e0 * SphHarmL1Regularizer(mr),
-                    # 1e-5 * SphHarmL1Regularizer(mr),
                 ]
 
                 # do a fast initialization reconstruction with L=0
@@ -122,32 +118,35 @@ with document('Two Week Retrievals') as doc:
                     coeffs=initcoeffs,
                 )
 
-                retrieved = mr(coeffs)
-                # FIXME - ugly, get rid of this eventually
-                # zero out retrieval/truth below 3Re
-                retrieved3 = retrieved.clone().detach()
-                retrieved3[mr.grid.r < 3] = 0
-                truth3 = truth.clone().detach()
-                truth3[mt.grid.r < 3] = 0
 
-                # desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{differr.lam:.0e}_{season}_init_{differr._reg}'
-                # %% plot
+                retrieved = mr(coeffs)
 
                 t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
 
+                # figure settings
+                figset = {'height': 200}
+
                 if issubclass(type(mr), SphHarmModel):
-                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), height=200)
+                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
                 else:
                     sphharm = ''
+
                 caption(
                     f"recon={mr}",
-                    plot(carderr(retrieved3.squeeze(), truth3.squeeze(), rgrid, sgrid), height=200),
+                    plot(carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), **figset),
                     sphharm,
-                    # plot(loss_plot(losses)),
-                    # plot(cardplotaxes(recon.squeeze(), grid)),
-                    # plot(cardplotaxes(truth.squeeze(), grid)),
+                    tags.br(),
+                    tags.details(
+                        tags.summary(),
+                        plot(loss_plot(losses), **figset),
+                        caption("Recon", plot(cardplot(retrieved.squeeze(), rgrid, norm='log'), **figset)),
+                        caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
+                        caption("Recon", plot(cardplotaxes(retrieved.squeeze(), rgrid, yscale='log'), **figset)),
+                        caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
+                    )
                 )
 
+    tags.h1("Source Code")
     tags.code(tags.pre(open('recon.py').read()))
 
 # %% plot
