@@ -18,13 +18,15 @@ from sph_raytracer.loss import AbsLoss, NegRegularizer
 
 device = 'cuda'
 
-# FIXME: remove this section for production, `sc` and `meas_L1C` generated externally
+# FIXME: remove this section for production, `sc` `ralbedo` `g_factor` and `meas_L1C` generated externally
 # ----- Truth Density and Spacecraft Generation -----
 
 from glide.common_components.camera import CameraWFI, CameraNFI, CameraL1BWFI, CameraL1BNFI
 from glide.common_components.cam import nadir_wfi_mode, nadir_nfi_mode
 from glide.common_components.generate_view_geom import gen_mission
 from glide.science.model_sph import Zoennchen24Model, Pratik25Model, TIMEGCMModel
+
+import torch as t
 
 t_op = 360 # minutes
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
@@ -45,18 +47,23 @@ truth = truth_model()
 f_truth = ForwardSph(sc, sgrid=sgrid, device=device)
 meas_L1C = f_truth.simulate(truth)
 
+# dynamic albedo, g_factor
+ralbedo = t.ones((len(sc), 200, 45, 60), device=device)
+g_factor = t.ones(len(sc), device=device)[:, None, None]
+
 # ----- Retrieval -----
 # %% retrieval
 
 # set up reconstruction model
 recon_model = SphHarmSplineModel(
-    DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log'),
+    DefaultGrid((len(sc), 200, 45, 60), size_r=(3, 25), spacing='log'),
     max_l=0, device=device, cpoints=16, spacing='log'
 )
 
 # set up forward operator with appropriate view geometry and grid
 f = ForwardSph(
     sc, rgrid=recon_model.grid,
+    ralbedo=ralbedo, g_factor=g_factor,
     # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
     rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
     device=device
