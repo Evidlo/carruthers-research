@@ -25,6 +25,7 @@ from glide.common_components.camera import CameraWFI, CameraNFI, CameraL1BWFI, C
 from glide.common_components.cam import nadir_wfi_mode, nadir_nfi_mode
 from glide.common_components.generate_view_geom import gen_mission
 from glide.science.model_sph import Zoennchen24Model, Pratik25Model, TIMEGCMModel
+from glide.science.forward_sph import Albedo
 
 import torch as t
 
@@ -43,22 +44,28 @@ truth_model = (
 # compute ground truth density
 truth = truth_model()
 
+salbedo = Albedo(sgrid, device=device)()
+sg_factor = t.ones(1) * 2.09e-3
+
 # compute L1C measurements
-f_truth = ForwardSph(sc, sgrid=sgrid, device=device)
+f_truth = ForwardSph(
+    sc, sgrid=sgrid, device=device,
+    salbedo=salbedo, g_factor=sg_factor,
+)
 meas_L1C = f_truth.simulate(truth)
 
+rgrid = DefaultGrid((len(sc), 200, 45, 60), size_r=(3, 25), spacing='log')
 # dynamic albedo, g_factor
-ralbedo = t.ones((len(sc), 200, 45, 60), device=device)
-g_factor = t.ones(len(sc), device=device)[:, None, None]
+# dynamic albedo should be shape (N, 200, 45, 60)
+ralbedo = Albedo(rgrid, device=device)().repeat(len(sc), 1, 1, 1)
+# dynamic g_factor should be shape (N, 1, 1)
+g_factor = t.ones(len(sc), device=device)[:, None, None] * 2.09e-3
 
 # ----- Retrieval -----
 # %% retrieval
 
 # set up reconstruction model
-recon_model = SphHarmSplineModel(
-    DefaultGrid((len(sc), 200, 45, 60), size_r=(3, 25), spacing='log'),
-    max_l=0, device=device, cpoints=16, spacing='log'
-)
+recon_model = SphHarmSplineModel(rgrid, max_l=0, device=device, cpoints=16, spacing='log')
 
 # set up forward operator with appropriate view geometry and grid
 f = ForwardSph(
