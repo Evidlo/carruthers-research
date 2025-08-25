@@ -31,7 +31,7 @@ import torch as t
 
 t_op = 360 # minutes
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
-sc = gen_mission(num_obs=1, duration=1, start='2025-12-24', cams=cams)
+sc = gen_mission(num_obs=10, duration=1, start='2025-12-24', cams=cams)
 
 
 # choose a dataset to reconstruct
