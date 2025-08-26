@@ -18,7 +18,7 @@ from sph_raytracer.loss import AbsLoss, NegRegularizer
 
 device = 'cuda'
 
-# FIXME: remove this section for production, `sc` `ralbedo` `g_factor` and `meas_L1C` generated externally
+# FIXME: remove this section for production, `sc` `ralbedo` `rg_factor` and `meas_L1C` generated externally
 # ----- Truth Density and Spacecraft Generation -----
 
 from glide.common_components.camera import CameraWFI, CameraNFI, CameraL1BWFI, CameraL1BNFI
@@ -44,6 +44,7 @@ truth_model = (
 # compute ground truth density
 truth = truth_model()
 
+# simulation albedo/gfactor
 salbedo = Albedo(sgrid, device=device)()
 sg_factor = t.ones(1) * 2.09e-3
 
@@ -54,27 +55,33 @@ f_truth = ForwardSph(
 )
 meas_L1C = f_truth.simulate(truth)
 
-rgrid = DefaultGrid((len(sc), 200, 45, 60), size_r=(3, 25), spacing='log')
-# dynamic albedo, g_factor
+rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
+# reconstruction albedo, g_factor
 # dynamic albedo should be shape (N, 200, 45, 60)
-ralbedo = Albedo(rgrid, device=device)().repeat(len(sc), 1, 1, 1)
+ralbedo = Albedo(rgrid, device=device)()[None, ...].repeat(len(sc), 1, 1, 1)
 # dynamic g_factor should be shape (N, 1, 1)
-g_factor = t.ones(len(sc), device=device)[:, None, None] * 2.09e-3
+rg_factor = t.ones(len(sc), device=device)[:, None, None] * 2.09e-3
 
 # ----- Retrieval -----
 # %% retrieval
 
 # set up reconstruction model
-recon_model = SphHarmSplineModel(rgrid, max_l=0, device=device, cpoints=16, spacing='log')
+init_recon_model = SphHarmSplineModel(
+    rgrid, max_l=0, device=device, cpoints=8, spacing='log', kind='catmullrom'
+)
+recon_model = SphHarmSplineModel(
+    rgrid, max_l=3, device=device, cpoints=8, spacing='log', kind='catmullrom'
+)
 
 # set up forward operator with appropriate view geometry and grid
 f = ForwardSph(
     sc, rgrid=recon_model.grid,
-    ralbedo=ralbedo, g_factor=g_factor,
+    ralbedo=ralbedo, g_factor=rg_factor,
     # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
     rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
     device=device
 )
+f.op.dynamic = True
 
 # calibrate and bin measurements to science pixel column densities
 meas = f.calibrate(meas_L1C)
@@ -83,15 +90,21 @@ meas = f.calibrate(meas_L1C)
 loss_fns = [
     1 * AbsLoss(projection_mask=f.proj_maskb),
     1e4 * NegRegularizer(),
-    1e1 * SphHarmL1Regularizer(recon_model),
     # FIXME: remove this line for production, no access to ground truth
     ReqErr(truth, truth_model.grid, recon_model.grid, interval=100),
 ]
 
+initcoeffs = t.zeros(recon_model.coeffs_shape, device=device)
+initcoeffs.data[0:1, :], _, _ = gd(
+    f, meas, init_recon_model, lr=5e0, num_iterations=600,
+    loss_fns=loss_fns,
+)
+
 # reconstruction loop
 coeffs, retrieved_meas, losses = gd(
-    f, meas, recon_model, lr=5e0,
-    loss_fns=loss_fns, num_iterations=3000,
+    f, meas, recon_model, lr=5e0, num_iterations=3000,
+    loss_fns=loss_fns + [1e1 * SphHarmL1Regularizer(recon_model)],
+    coeffs=initcoeffs
 )
 retrieved = recon_model(coeffs)
 
@@ -134,5 +147,5 @@ result = caption(
     )
 )
 
-with open('/www/l1c_l2.html', 'w') as f:
-    f.write(result.render())
+with open('/www/l1c_l2.html', 'w') as ff:
+    ff.write(result.render())
