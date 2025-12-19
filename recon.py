@@ -10,7 +10,7 @@ from glide.science.plotting import *
 from glide.science.plotting_sph import carderr, cardplot, carderrmin, cardplotaxes
 from glide.science.recon.loss_sph import *
 
-from dominate_tags import *
+from domrep import *
 
 from pathlib import Path
 from sph_raytracer import *
