@@ -287,10 +287,17 @@ def refresh_image(fname):
         s, im = compute(fname, r['w_clip'].value, w_func.value,
                         w_a.value, w_b.value, w_c.value, col_groups)
         nr, nc = im.shape
-        r['line_source'].data = make_line_data(s, col_groups)
+        line_data = make_line_data(s, col_groups)
+        r['line_source'].data = line_data
         r['img_source'].data = dict(image=[im[::-1]], dw=[nc], dh=[nr])
         r['vline_source'].data = make_vline_data(nc, nr, col_groups)
         r['mapper'].high = max(r['w_clip'].value, 1e-6)
+        all_ys = [v for sub in line_data['ys'] for v in sub]
+        if all_ys:
+            lo, hi = min(all_ys), max(all_ys)
+            pad = max((hi - lo) * 0.05, 1e-6)
+            r['fig_lines'].y_range.start = lo - pad
+            r['fig_lines'].y_range.end = hi + pad
         w_err.text = ""
     except Exception as e:
         w_err.text = f'<span style="color: red">{e}</span>'
