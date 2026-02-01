@@ -3,17 +3,17 @@
 # Run with: bokeh serve subtract_interactive.py --show --allow-websocket-origin=*
 
 import json
+import math
 import numpy as np
 from bokeh.plotting import figure
 from bokeh.io import curdoc
 from bokeh.models import (ColumnDataSource, Slider, Spinner, Select,
                           TextInput, Div, LinearColorMapper, DataRange1d,
-                          CustomJS)
+                          CustomJS, Button)
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
-from bokeh.events import DocumentReady
 
-DEFAULT_GROUPS = [[0, 1], [2, 3, 4, 5], [6, 7]]
+DEFAULT_GROUPS = [[0, 0.25], [0.25, 0.75], [0.75, 1]]
 FILE_OPTIONS = ['oob_wfi', 'oob_nfi', 'sci_wfi', 'sci_nfi']
 
 
@@ -43,7 +43,7 @@ p = dict(
     clip_lo=_get('clip_lo', 0.0),
     clip_hi=_get('clip_hi', 5000.0),
     clip_steps=_get('clip_steps', 500),
-    func=_get('func', 'x += x.mean(axis=1, keepdims=True) / a'),
+    func=_get('func', 'x = x + np.mean(x, axis=1, keepdims=True) / a'),
     groups=_get('groups', json.dumps(DEFAULT_GROUPS)),
     a=_get('a', 80.0),
     a_lo=_get('a_lo', 0.0),
@@ -71,6 +71,13 @@ def _step(lo, hi, steps):
     return (hi - lo) / max(steps, 1)
 
 
+def _format(step):
+    if step <= 0 or step >= 1:
+        return "0[.]0"
+    d = min(math.ceil(-math.log10(step)), 6)
+    return "0." + "0" * d
+
+
 # --- Computation ---
 def compute(file_name, clip_level, func_str, a, b, c, col_groups):
     x = np.load(f'images/{file_name}.npy') / 300
@@ -78,12 +85,15 @@ def compute(file_name, clip_level, func_str, a, b, c, col_groups):
     exec(func_str, ns)
     x = ns['x']
 
-    squish1 = np.stack(np.split(x, 8, axis=1), axis=-1)
-    col_width = squish1.shape[1]
-    squish = np.median(squish1, axis=1)
-    squish = np.stack([squish[:, g].mean(axis=-1) for g in col_groups], axis=-1)
+    nrows, ncols = x.shape
+    groups = []
+    for frac_lo, frac_hi in col_groups:
+        c0 = int(round(frac_lo * ncols))
+        c1 = int(round(frac_hi * ncols))
+        groups.append(np.median(x[:, c0:c1], axis=1))
+    squish = np.stack(groups, axis=-1)
 
-    return np.clip(squish, 0, clip_level), np.clip(x, 0, clip_level), col_width
+    return np.clip(squish, 0, clip_level), np.clip(x, 0, clip_level)
 
 
 def make_line_data(squish, col_groups):
@@ -95,19 +105,21 @@ def make_line_data(squish, col_groups):
     return dict(xs=xs, ys=ys, colors=colors, labels=labels)
 
 
-def make_vline_data(col_width, nrows, col_groups):
+def make_vline_data(ncols, nrows, col_groups):
     xs, ys = [], []
-    j = 0
-    for g in col_groups[:-1]:
-        j += len(g)
-        xs.append([col_width * j, col_width * j])
+    for frac_lo, frac_hi in col_groups:
+        xpos = frac_lo * ncols
+        xs.append([xpos, xpos])
+        ys.append([0, nrows])
+        xpos = frac_hi * ncols
+        xs.append([xpos, xpos])
         ys.append([0, nrows])
     return dict(xs=xs, ys=ys)
 
 
 # --- Initial computation ---
 col_groups_init = json.loads(p['groups'])
-squish, img, col_w = compute(
+squish, img = compute(
     p['file'], p['clip'], p['func'],
     p['a'], p['b'], p['c'], col_groups_init)
 nrows, ncols = img.shape
@@ -115,7 +127,7 @@ nrows, ncols = img.shape
 # --- Data Sources ---
 line_source = ColumnDataSource(make_line_data(squish, col_groups_init))
 img_source = ColumnDataSource(dict(image=[img[::-1]], dw=[ncols], dh=[nrows]))
-vline_source = ColumnDataSource(make_vline_data(col_w, nrows, col_groups_init))
+vline_source = ColumnDataSource(make_vline_data(ncols, nrows, col_groups_init))
 
 # --- Figures ---
 fig_lines = figure(width=675, height=525, title="Column Groups",
@@ -140,9 +152,10 @@ fig_img.multi_line(xs='xs', ys='ys', source=vline_source,
 w_file = Select(title="Image", value=p['file'],
                 options=FILE_OPTIONS, width=200)
 
+_clip_s = _step(p['clip_lo'], p['clip_hi'], p['clip_steps'])
 w_clip = Slider(title="Clip Level", value=p['clip'],
                 start=p['clip_lo'], end=p['clip_hi'],
-                step=_step(p['clip_lo'], p['clip_hi'], p['clip_steps']), width=250)
+                step=_clip_s, format=_format(_clip_s), width=250)
 w_clip_lo = Spinner(title="Start", value=p['clip_lo'], step=1, width=80)
 w_clip_hi = Spinner(title="Stop", value=p['clip_hi'], step=1, width=80)
 w_clip_steps = Spinner(title="Steps", value=p['clip_steps'], step=1, low=1, width=80)
@@ -150,23 +163,26 @@ w_clip_steps = Spinner(title="Steps", value=p['clip_steps'], step=1, low=1, widt
 w_func = TextInput(title="Function", value=p['func'], width=300)
 w_groups = TextInput(title="Column Groups", value=p['groups'], width=300)
 
+_a_s = _step(p['a_lo'], p['a_hi'], p['a_steps'])
 w_a = Slider(title="a", value=p['a'],
              start=p['a_lo'], end=p['a_hi'],
-             step=_step(p['a_lo'], p['a_hi'], p['a_steps']), width=250)
+             step=_a_s, format=_format(_a_s), width=250)
 w_a_lo = Spinner(title="Start", value=p['a_lo'], step=1, width=80)
 w_a_hi = Spinner(title="Stop", value=p['a_hi'], step=1, width=80)
 w_a_steps = Spinner(title="Steps", value=p['a_steps'], step=1, low=1, width=80)
 
+_b_s = _step(p['b_lo'], p['b_hi'], p['b_steps'])
 w_b = Slider(title="b", value=p['b'],
              start=p['b_lo'], end=p['b_hi'],
-             step=_step(p['b_lo'], p['b_hi'], p['b_steps']), width=250)
+             step=_b_s, format=_format(_b_s), width=250)
 w_b_lo = Spinner(title="Start", value=p['b_lo'], step=0.01, width=80)
 w_b_hi = Spinner(title="Stop", value=p['b_hi'], step=0.01, width=80)
 w_b_steps = Spinner(title="Steps", value=p['b_steps'], step=1, low=1, width=80)
 
+_c_s = _step(p['c_lo'], p['c_hi'], p['c_steps'])
 w_c = Slider(title="c", value=p['c'],
              start=p['c_lo'], end=p['c_hi'],
-             step=_step(p['c_lo'], p['c_hi'], p['c_steps']), width=250)
+             step=_c_s, format=_format(_c_s), width=250)
 w_c_lo = Spinner(title="Start", value=p['c_lo'], step=0.01, width=80)
 w_c_hi = Spinner(title="Stop", value=p['c_hi'], step=0.01, width=80)
 w_c_steps = Spinner(title="Steps", value=p['c_steps'], step=1, low=1, width=80)
@@ -174,7 +190,7 @@ w_c_steps = Spinner(title="Steps", value=p['c_steps'], step=1, low=1, width=80)
 w_err = Div(text="", width=300)
 
 
-# --- URL sync (client-side JS) ---
+# --- Copy Settings button (client-side JS) ---
 _url_args = dict(
     w_file=w_file, w_clip=w_clip,
     w_clip_lo=w_clip_lo, w_clip_hi=w_clip_hi, w_clip_steps=w_clip_steps,
@@ -184,7 +200,8 @@ _url_args = dict(
     w_c=w_c, w_c_lo=w_c_lo, w_c_hi=w_c_hi, w_c_steps=w_c_steps,
 )
 
-_url_js = CustomJS(args=_url_args, code="""
+w_copy = Button(label="Copy Settings", width=150)
+w_copy.js_on_click(CustomJS(args=_url_args, code="""
     const m = {
         file: w_file, clip: w_clip,
         clip_lo: w_clip_lo, clip_hi: w_clip_hi, clip_steps: w_clip_steps,
@@ -197,28 +214,32 @@ _url_js = CustomJS(args=_url_args, code="""
     for (const [k, w] of Object.entries(m)) {
         p.set(k, String(w.value));
     }
-    window.history.replaceState({}, '', '?' + p.toString());
-""")
-
-for _w in _url_args.values():
-    _w.js_on_change('value', _url_js)
-
-# Also set URL on initial page load
-curdoc().js_on_event(DocumentReady, _url_js)
+    const url = window.location.origin + window.location.pathname + '?' + p.toString();
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    cb_obj.label = "Copied!";
+    setTimeout(() => { cb_obj.label = "Copy Settings"; }, 1500);
+"""))
 
 
 # --- Server callbacks ---
 def refresh():
     try:
         col_groups = json.loads(w_groups.value)
-        s, im, cw = compute(
+        s, im = compute(
             w_file.value, w_clip.value, w_func.value,
             w_a.value, w_b.value, w_c.value, col_groups)
         nr, nc = im.shape
 
         line_source.data = make_line_data(s, col_groups)
         img_source.data = dict(image=[im[::-1]], dw=[nc], dh=[nr])
-        vline_source.data = make_vline_data(cw, nr, col_groups)
+        vline_source.data = make_vline_data(nc, nr, col_groups)
 
         mapper.high = max(w_clip.value, 1e-6)
         w_err.text = ""
@@ -234,7 +255,9 @@ def make_range_cb(slider, lo, hi, steps):
     def cb(attr, old, new):
         slider.start = lo.value
         slider.end = hi.value
-        slider.step = (hi.value - lo.value) / max(steps.value, 1)
+        step = (hi.value - lo.value) / max(steps.value, 1)
+        slider.step = step
+        slider.format = _format(step)
         refresh()
     return cb
 
@@ -270,6 +293,7 @@ controls = column(
     w_a, row(w_a_lo, w_a_hi, w_a_steps),
     w_b, row(w_b_lo, w_b_hi, w_b_steps),
     w_c, row(w_c_lo, w_c_hi, w_c_steps),
+    w_copy,
     w_err,
 )
 
