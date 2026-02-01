@@ -9,7 +9,7 @@ from bokeh.plotting import figure
 from bokeh.io import curdoc
 from bokeh.models import (ColumnDataSource, Slider, Spinner, CheckboxGroup,
                           TextInput, Div, LinearColorMapper, DataRange1d,
-                          CustomJS, Button)
+                          Range1d, CustomJS, Button)
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
 
@@ -146,6 +146,7 @@ for _fname in FILE_OPTIONS:
     _vs = ColumnDataSource(dict(xs=[], ys=[]))
 
     _fl = figure(title=f"{_fname} — Column Groups",
+                 y_range=Range1d(),
                  sizing_mode='stretch_both', min_height=200,
                  tools="pan,wheel_zoom,box_zoom,reset,save")
     _fl.multi_line(xs='xs', ys='ys', source=_ls,
@@ -292,16 +293,16 @@ def refresh_image(fname):
                         w_a.value, w_b.value, w_c.value, col_groups)
         nr, nc = im.shape
         line_data = make_line_data(s, col_groups)
-        r['line_source'].data = line_data
-        r['img_source'].data = dict(image=[im[::-1]], dw=[nc], dh=[nr])
-        r['vline_source'].data = make_vline_data(nc, nr, col_groups)
-        r['mapper'].high = max(r['w_clip'].value, 1e-6)
         all_ys = [v for sub in line_data['ys'] for v in sub]
         if all_ys:
             lo, hi = min(all_ys), max(all_ys)
             pad = max((hi - lo) * 0.05, 1e-6)
             r['fig_lines'].y_range.start = lo - pad
             r['fig_lines'].y_range.end = hi + pad
+        r['line_source'].data = line_data
+        r['vline_source'].data = make_vline_data(nc, nr, col_groups)
+        r['mapper'].high = max(r['w_clip'].value, 1e-6)
+        r['img_source'].data = dict(image=[im[::-1]], dw=[nc], dh=[nr])
         w_err.text = ""
     except Exception as e:
         w_err.text = f'<span style="color: red">{e}</span>'
