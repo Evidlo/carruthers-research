@@ -73,9 +73,13 @@ def _format(step):
     return "0." + "0" * d
 
 
+# --- Load images once ---
+images = {f: np.load(f'images/{f}.npy') / 300 for f in FILE_OPTIONS}
+
+
 # --- Computation ---
 def compute(file_name, clip_level, func_str, a, b, c, col_groups):
-    x = np.load(f'images/{file_name}.npy') / 300
+    x = images[file_name].copy()
     ns = {'x': x, 'a': a, 'b': b, 'c': c, 'np': np}
     exec(func_str, ns)
     x = ns['x']
