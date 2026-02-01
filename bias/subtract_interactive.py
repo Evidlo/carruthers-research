@@ -127,7 +127,7 @@ for _fname in FILE_OPTIONS:
         _groups_val = json.dumps(DEFAULT_GROUPS)
 
     _cs = _step(_clip_lo_val, _clip_hi_val, _clip_steps_val)
-    _w_g = TextInput(title=_fname, value=_groups_val, width=300)
+    _w_g = TextInput(value=_groups_val, width=300)
     _w_cl = Slider(title="Clip", value=_clip_val,
                    start=_clip_lo_val, end=_clip_hi_val,
                    step=_cs, format=_format(_cs), width=250)
@@ -153,7 +153,7 @@ for _fname in FILE_OPTIONS:
                  x_range=DataRange1d(range_padding=0),
                  y_range=DataRange1d(range_padding=0),
                  match_aspect=True,
-                 sizing_mode='stretch_both', min_height=200,
+                 sizing_mode='scale_height', width=400, height=400,
                  tools="pan,wheel_zoom,box_zoom,reset,save")
     _fi.image(image='image', source=_is, x=0, y=0, dw='dw', dh='dh',
               color_mapper=_mp)
@@ -201,8 +201,14 @@ w_err = Div(text="", width=300)
 
 
 # --- Dynamic layout containers ---
-per_image_col = column()
+per_image_col = column(visible=False)
 plot_col = column(sizing_mode='stretch_both')
+
+w_per_image_toggle = Button(label="\u25b6 Image Controls", width=300)
+w_per_image_toggle.js_on_click(CustomJS(args=dict(col=per_image_col), code="""
+    col.visible = !col.visible;
+    cb_obj.label = col.visible ? "\u25bc Image Controls" : "\u25b6 Image Controls";
+"""))
 
 
 # --- Copy Settings button (client-side JS) ---
@@ -300,13 +306,16 @@ def rebuild():
 
     # Rebuild per-image controls in the left column
     children = []
-    for fname in selected:
-        r = rows[fname]
-        children.extend([
-            r['w_groups'],
-            r['w_clip'],
-            row(r['w_clip_lo'], r['w_clip_hi'], r['w_clip_steps']),
-        ])
+    if selected:
+        children.append(Div(text="<b>Column Grouping</b>"))
+        for fname in selected:
+            children.append(rows[fname]['w_groups'])
+        for fname in selected:
+            r = rows[fname]
+            children.extend([
+                r['w_clip'],
+                row(r['w_clip_lo'], r['w_clip_hi'], r['w_clip_steps']),
+            ])
     per_image_col.children = children
 
     # Rebuild plot rows (one row per selected image)
@@ -389,6 +398,7 @@ for _slider, _lo, _hi, _steps in [(w_a, w_a_lo, w_a_hi, w_a_steps),
 controls = column(
     Div(text="<b>Image</b>"),
     w_checkbox,
+    w_per_image_toggle,
     per_image_col,
     Div(text="<b>Subtraction</b>"),
     w_func,
