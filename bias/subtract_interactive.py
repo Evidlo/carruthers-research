@@ -210,12 +210,19 @@ w_err = Div(text="", width=300)
 
 # --- Dynamic layout containers ---
 per_image_col = column(visible=False)
+subtraction_col = column(visible=False)
 plot_col = column(sizing_mode='stretch_both')
 
 w_per_image_toggle = Button(label="\u25b6 Image Controls", width=300)
-w_per_image_toggle.js_on_click(CustomJS(args=dict(col=per_image_col), code="""
+w_per_image_toggle.js_on_click(CustomJS(args=dict(col=per_image_col, btn=w_per_image_toggle), code="""
     col.visible = !col.visible;
-    cb_obj.label = col.visible ? "\u25bc Image Controls" : "\u25b6 Image Controls";
+    btn.label = col.visible ? "\u25bc Image Controls" : "\u25b6 Image Controls";
+"""))
+
+w_subtraction_toggle = Button(label="\u25b6 Subtraction", width=300)
+w_subtraction_toggle.js_on_click(CustomJS(args=dict(col=subtraction_col, btn=w_subtraction_toggle), code="""
+    col.visible = !col.visible;
+    btn.label = col.visible ? "\u25bc Subtraction" : "\u25b6 Subtraction";
 """))
 
 
@@ -413,17 +420,21 @@ for _slider, _lo, _hi, _steps in [(w_a, w_a_lo, w_a_hi, w_a_steps),
 
 
 # --- Layout ---
-controls = column(
-    Div(text="<b>Image</b>"),
-    w_checkbox,
-    w_per_image_toggle,
-    per_image_col,
-    Div(text="<b>Subtraction</b>"),
+subtraction_col.children = [
     w_row_agg,
     w_func,
     w_a, row(w_a_lo, w_a_hi, w_a_steps),
     w_b, row(w_b_lo, w_b_hi, w_b_steps),
     w_c, row(w_c_lo, w_c_hi, w_c_steps),
+]
+
+controls = column(
+    Div(text="<b>Image</b>"),
+    w_checkbox,
+    w_per_image_toggle,
+    per_image_col,
+    w_subtraction_toggle,
+    subtraction_col,
     w_copy,
     w_err,
 )
