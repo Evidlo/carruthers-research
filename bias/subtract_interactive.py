@@ -162,6 +162,7 @@ for _fname in FILE_OPTIONS:
                  match_aspect=True,
                  sizing_mode='scale_height', width=400, height=400,
                  tools="pan,wheel_zoom,box_zoom,reset,save")
+    _fi.y_range.flipped = True
     _fi.image(image='image', source=_is, x=0, y=0, dw='dw', dh='dh',
               color_mapper=_mp)
     _fi.multi_line(xs='xs', ys='ys', source=_vs,
@@ -314,7 +315,7 @@ def refresh_image(fname):
         r['line_source'].data = line_data
         r['vline_source'].data = make_vline_data(nc, nr, col_groups)
         r['mapper'].high = max(r['w_clip'].value, 1e-6)
-        r['img_source'].data = dict(image=[im[::-1]], dw=[nc], dh=[nr])
+        r['img_source'].data = dict(image=[im], dw=[nc], dh=[nr])
         w_err.text = ""
     except Exception as e:
         w_err.text = f'<span style="color: red">{e}</span>'
