@@ -5,6 +5,7 @@
 import json
 import math
 import numpy as np
+from pathlib import Path
 from bokeh.plotting import figure
 from bokeh.io import curdoc
 from bokeh.models import (ColumnDataSource, Slider, Spinner, CheckboxGroup,
@@ -14,7 +15,7 @@ from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
 
 DEFAULT_GROUPS = [[0, 0.25], [0.25, 0.75], [0.75, 1]]
-FILE_OPTIONS = ['oob_wfi', 'oob_nfi', 'sci_wfi', 'sci_nfi']
+FILE_OPTIONS = [f.stem for f in sorted(Path('images').glob('*.npy'))]
 
 
 # --- Parse URL query params ---
