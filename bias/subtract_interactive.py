@@ -40,7 +40,8 @@ def _get(key, default):
 # Shared params
 p = dict(
     files=_get('files', 'oob_wfi'),
-    func=_get('func', 'x = x + np.mean(x, axis=1, keepdims=True) / a'),
+    row_agg=_get('row_agg', 's = np.mean(x, axis=1, keepdims=True)'),
+    func=_get('func', 'x = x + s / a'),
     a=_get('a', 80.0),
     a_lo=_get('a_lo', 0.0),
     a_hi=_get('a_hi', 500.0),
@@ -78,9 +79,10 @@ images = {f: np.load(f'images/{f}.npy') / 300 for f in FILE_OPTIONS}
 
 
 # --- Computation ---
-def compute(file_name, clip_level, func_str, a, b, c, col_groups):
+def compute(file_name, clip_level, row_agg_str, func_str, a, b, c, col_groups):
     x = images[file_name].copy()
     ns = {'x': x, 'a': a, 'b': b, 'c': c, 'np': np}
+    exec(row_agg_str, ns)
     exec(func_str, ns)
     x = ns['x']
 
@@ -176,6 +178,7 @@ for _fname in FILE_OPTIONS:
 # --- Shared Widgets ---
 w_checkbox = CheckboxGroup(labels=FILE_OPTIONS, active=_init_active)
 
+w_row_agg = TextInput(title="Row Aggregate", value=p['row_agg'], width=300)
 w_func = TextInput(title="Function", value=p['func'], width=300)
 
 _a_s = _step(p['a_lo'], p['a_hi'], p['a_steps'])
@@ -219,6 +222,7 @@ w_per_image_toggle.js_on_click(CustomJS(args=dict(col=per_image_col), code="""
 # --- Copy Settings button (client-side JS) ---
 _url_args = dict(
     w_checkbox=w_checkbox,
+    w_row_agg=w_row_agg,
     w_func=w_func,
     w_a=w_a, w_a_lo=w_a_lo, w_a_hi=w_a_hi, w_a_steps=w_a_steps,
     w_b=w_b, w_b_lo=w_b_lo, w_b_hi=w_b_hi, w_b_steps=w_b_steps,
@@ -247,6 +251,7 @@ w_copy.js_on_click(CustomJS(args=_url_args, code=f"""
     const p = new URLSearchParams();
 
     p.set('files', active.map(i => files[i]).join(','));
+    p.set('row_agg', String(w_row_agg.value));
     p.set('func', String(w_func.value));
     p.set('a', String(w_a.value));
     p.set('a_lo', String(w_a_lo.value));
@@ -289,7 +294,7 @@ def refresh_image(fname):
     r = rows[fname]
     try:
         col_groups = json.loads(r['w_groups'].value)
-        s, im = compute(fname, r['w_clip'].value, w_func.value,
+        s, im = compute(fname, r['w_clip'].value, w_row_agg.value, w_func.value,
                         w_a.value, w_b.value, w_c.value, col_groups)
         nr, nc = im.shape
         line_data = make_line_data(s, col_groups)
@@ -385,6 +390,7 @@ for _fname in FILE_OPTIONS:
 for _s in [w_a, w_b, w_c]:
     _s.on_change('value_throttled', on_shared_change)
 
+w_row_agg.on_change('value', on_shared_change)
 w_func.on_change('value', on_shared_change)
 w_checkbox.on_change('active', on_checkbox_change)
 
@@ -413,6 +419,7 @@ controls = column(
     w_per_image_toggle,
     per_image_col,
     Div(text="<b>Subtraction</b>"),
+    w_row_agg,
     w_func,
     w_a, row(w_a_lo, w_a_hi, w_a_steps),
     w_b, row(w_b_lo, w_b_hi, w_b_steps),
