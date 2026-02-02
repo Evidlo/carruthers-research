@@ -42,7 +42,7 @@ def _get(key, default):
 p = dict(
     files=_get('files', 'oob_wfi'),
     row_agg=_get('row_agg', 's = np.mean(x, axis=1, keepdims=True)'),
-    func=_get('func', 'x = x + s / a'),
+    func=_get('func', 'x = x'),
     a=_get('a', 80.0),
     a_lo=_get('a_lo', 0.0),
     a_hi=_get('a_hi', 500.0),
