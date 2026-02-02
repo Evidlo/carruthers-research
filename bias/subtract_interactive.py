@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 from bokeh.plotting import figure
 from bokeh.io import curdoc
-from bokeh.models import (ColumnDataSource, Slider, Spinner, CheckboxGroup,
+from bokeh.models import (ColumnDataSource, Slider, Spinner, MultiChoice,
                           TextInput, Div, LinearColorMapper, DataRange1d,
                           Range1d, CustomJS, Button)
 from bokeh.layouts import row, column
@@ -60,8 +60,7 @@ p = dict(
 _init_files = [f.strip() for f in p['files'].split(',')
                if f.strip() in FILE_OPTIONS]
 if not _init_files:
-    _init_files = ['oob_wfi']
-_init_active = [FILE_OPTIONS.index(f) for f in _init_files]
+    _init_files = [FILE_OPTIONS[0]] if FILE_OPTIONS else []
 
 
 def _step(lo, hi, steps):
@@ -148,7 +147,7 @@ for _fname in FILE_OPTIONS:
     _is = ColumnDataSource(dict(image=[], dw=[], dh=[]))
     _vs = ColumnDataSource(dict(xs=[], ys=[]))
 
-    _fl = figure(title=f"{_fname} — Column Groups",
+    _fl = figure(title=f"{_fname} — Row Median",
                  y_range=Range1d(),
                  sizing_mode='stretch_both', min_height=200,
                  tools="pan,wheel_zoom,box_zoom,reset,save")
@@ -177,7 +176,7 @@ for _fname in FILE_OPTIONS:
 
 
 # --- Shared Widgets ---
-w_checkbox = CheckboxGroup(labels=FILE_OPTIONS, active=_init_active)
+w_multichoice = MultiChoice(options=FILE_OPTIONS, value=_init_files, width=300)
 
 w_row_agg = TextInput(title="Row Aggregate", value=p['row_agg'], width=300)
 w_func = TextInput(title="Function", value=p['func'], width=300)
@@ -229,7 +228,7 @@ w_subtraction_toggle.js_on_click(CustomJS(args=dict(col=subtraction_col, btn=w_s
 
 # --- Copy Settings button (client-side JS) ---
 _url_args = dict(
-    w_checkbox=w_checkbox,
+    w_multichoice=w_multichoice,
     w_row_agg=w_row_agg,
     w_func=w_func,
     w_a=w_a, w_a_lo=w_a_lo, w_a_hi=w_a_hi, w_a_steps=w_a_steps,
@@ -254,11 +253,11 @@ _pi_js = '{\n        ' + ',\n        '.join(_pi_entries) + '\n    }'
 w_copy = Button(label="Copy Settings", width=150)
 w_copy.js_on_click(CustomJS(args=_url_args, code=f"""
     const files = {json.dumps(FILE_OPTIONS)};
-    const active = w_checkbox.active;
+    const selected = w_multichoice.value;
     const pi = {_pi_js};
     const p = new URLSearchParams();
 
-    p.set('files', active.map(i => files[i]).join(','));
+    p.set('files', selected.join(','));
     p.set('row_agg', String(w_row_agg.value));
     p.set('func', String(w_func.value));
     p.set('a', String(w_a.value));
@@ -322,12 +321,12 @@ def refresh_image(fname):
 
 
 def refresh_all():
-    for i in w_checkbox.active:
-        refresh_image(FILE_OPTIONS[i])
+    for fname in w_multichoice.value:
+        refresh_image(fname)
 
 
 def rebuild():
-    selected = [FILE_OPTIONS[i] for i in w_checkbox.active]
+    selected = w_multichoice.value
 
     # Rebuild per-image controls in the left column
     children = []
@@ -358,7 +357,7 @@ def on_shared_change(attr, old, new):
     refresh_all()
 
 
-def on_checkbox_change(attr, old, new):
+def on_multichoice_change(attr, old, new):
     rebuild()
 
 
@@ -368,7 +367,7 @@ for _fname in FILE_OPTIONS:
 
     def _make_img_cb(fn):
         def cb(attr, old, new):
-            if FILE_OPTIONS.index(fn) in w_checkbox.active:
+            if fn in w_multichoice.value:
                 refresh_image(fn)
         return cb
 
@@ -384,7 +383,7 @@ for _fname in FILE_OPTIONS:
             r['w_clip'].end = r['w_clip_hi'].value
             r['w_clip'].step = step
             r['w_clip'].format = _format(step)
-            if FILE_OPTIONS.index(fn) in w_checkbox.active:
+            if fn in w_multichoice.value:
                 refresh_image(fn)
         return cb
 
@@ -400,7 +399,7 @@ for _s in [w_a, w_b, w_c]:
 
 w_row_agg.on_change('value', on_shared_change)
 w_func.on_change('value', on_shared_change)
-w_checkbox.on_change('active', on_checkbox_change)
+w_multichoice.on_change('value', on_multichoice_change)
 
 for _slider, _lo, _hi, _steps in [(w_a, w_a_lo, w_a_hi, w_a_steps),
                                     (w_b, w_b_lo, w_b_hi, w_b_steps),
@@ -431,7 +430,7 @@ subtraction_col.children = [
 
 controls = column(
     Div(text="<b>Image</b>"),
-    w_checkbox,
+    w_multichoice,
     w_per_image_toggle,
     per_image_col,
     w_subtraction_toggle,
