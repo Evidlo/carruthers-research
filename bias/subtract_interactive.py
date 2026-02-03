@@ -10,7 +10,7 @@ from bokeh.plotting import figure
 from bokeh.io import curdoc
 from bokeh.models import (ColumnDataSource, Slider, Spinner, MultiChoice,
                           TextInput, Div, LinearColorMapper, DataRange1d,
-                          Range1d, CustomJS, Button)
+                          Range1d, CustomJS, Button, LinearAxis, CheckboxGroup)
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
 
@@ -83,6 +83,7 @@ def compute(file_name, clip_level, row_agg_str, func_str, a, b, c, col_groups):
     x = images[file_name].copy()
     ns = {'x': x, 'a': a, 'b': b, 'c': c, 'np': np}
     exec(row_agg_str, ns)
+    s = ns.get('s')
     exec(func_str, ns)
     x = ns['x']
 
@@ -94,7 +95,8 @@ def compute(file_name, clip_level, row_agg_str, func_str, a, b, c, col_groups):
         groups.append(np.median(x[:, c0:c1], axis=1))
     squish = np.stack(groups, axis=-1)
 
-    return np.clip(squish, 0, clip_level), np.clip(x, 0, clip_level)
+    stat = s.flatten() if s is not None and s.size > 0 else None
+    return np.clip(squish, 0, clip_level), np.clip(x, 0, clip_level), stat
 
 
 def make_line_data(squish, col_groups):
@@ -124,7 +126,7 @@ for _fname in FILE_OPTIONS:
     _clip_val = _get(f'clip.{_fname}', 25.0)
     _groups_val = _get(f'groups.{_fname}', json.dumps(DEFAULT_GROUPS))
     _clip_lo_val = _get(f'clip_lo.{_fname}', 0.0)
-    _clip_hi_val = _get(f'clip_hi.{_fname}', 5000.0)
+    _clip_hi_val = _get(f'clip_hi.{_fname}', 1000.0)
     _clip_steps_val = _get(f'clip_steps.{_fname}', 500)
 
     try:
@@ -144,6 +146,7 @@ for _fname in FILE_OPTIONS:
 
     _mp = LinearColorMapper(palette=Viridis256, low=0, high=_clip_val)
     _ls = ColumnDataSource(dict(xs=[], ys=[], colors=[], labels=[]))
+    _ss = ColumnDataSource(dict(x=[], y=[]))
     _is = ColumnDataSource(dict(image=[], dw=[], dh=[]))
     _vs = ColumnDataSource(dict(xs=[], ys=[]))
 
@@ -155,6 +158,12 @@ for _fname in FILE_OPTIONS:
                    line_color='colors', line_width=1.5,
                    legend_field='labels')
     _fl.legend.click_policy = "hide"
+
+    _fl.extra_y_ranges = {"stat": Range1d()}
+    _fl.add_layout(LinearAxis(y_range_name="stat", axis_label="Row Stat."), 'right')
+    _stat_line = _fl.line(x='x', y='y', source=_ss, y_range_name="stat",
+                          line_color='gray', line_width=1.5, alpha=0.7,
+                          visible=True, legend_label="Row Stat.")
 
     _fi = figure(title=_fname,
                  x_range=DataRange1d(range_padding=0),
@@ -171,15 +180,16 @@ for _fname in FILE_OPTIONS:
     rows[_fname] = dict(
         w_groups=_w_g, w_clip=_w_cl,
         w_clip_lo=_w_cl_lo, w_clip_hi=_w_cl_hi, w_clip_steps=_w_cl_st,
-        line_source=_ls, img_source=_is, vline_source=_vs,
-        fig_lines=_fl, fig_img=_fi, mapper=_mp,
+        line_source=_ls, stat_source=_ss, img_source=_is, vline_source=_vs,
+        fig_lines=_fl, fig_img=_fi, mapper=_mp, stat_line=_stat_line,
     )
 
 
 # --- Shared Widgets ---
 w_multichoice = MultiChoice(options=FILE_OPTIONS, value=_init_files, width=300)
+w_plot_stat = CheckboxGroup(labels=["Plot Row Statistic"], active=[0])
 
-w_row_agg = TextInput(title="Row Aggregate", value=p['row_agg'], width=300)
+w_row_agg = TextInput(title="Row Statistic", value=p['row_agg'], width=300)
 w_func = TextInput(title="Function", value=p['func'], width=300)
 
 _a_s = _step(p['a_lo'], p['a_hi'], p['a_steps'])
@@ -302,8 +312,8 @@ def refresh_image(fname):
     r = rows[fname]
     try:
         col_groups = json.loads(r['w_groups'].value)
-        s, im = compute(fname, r['w_clip'].value, w_row_agg.value, w_func.value,
-                        w_a.value, w_b.value, w_c.value, col_groups)
+        s, im, stat = compute(fname, r['w_clip'].value, w_row_agg.value, w_func.value,
+                              w_a.value, w_b.value, w_c.value, col_groups)
         nr, nc = im.shape
         line_data = make_line_data(s, col_groups)
         all_ys = [v for sub in line_data['ys'] for v in sub]
@@ -313,6 +323,17 @@ def refresh_image(fname):
             r['fig_lines'].y_range.start = lo - pad
             r['fig_lines'].y_range.end = hi + pad
         r['line_source'].data = line_data
+
+        # Update stat line
+        if stat is not None:
+            r['stat_source'].data = dict(x=np.arange(len(stat)).tolist(), y=stat.tolist())
+            stat_lo, stat_hi = stat.min(), stat.max()
+            stat_pad = max((stat_hi - stat_lo) * 0.05, 1e-6)
+            r['fig_lines'].extra_y_ranges['stat'].start = stat_lo - stat_pad
+            r['fig_lines'].extra_y_ranges['stat'].end = stat_hi + stat_pad
+        else:
+            r['stat_source'].data = dict(x=[], y=[])
+
         r['vline_source'].data = make_vline_data(nc, nr, col_groups)
         r['mapper'].high = max(r['w_clip'].value, 1e-6)
         r['img_source'].data = dict(image=[im], dw=[nc], dh=[nr])
@@ -332,6 +353,7 @@ def rebuild():
     # Rebuild per-image controls in the left column
     children = []
     if selected:
+        children.append(w_plot_stat)
         children.append(Div(text="<b>Column Grouping</b>"))
         for fname in selected:
             children.append(rows[fname]['w_groups'])
@@ -360,6 +382,12 @@ def on_shared_change(attr, old, new):
 
 def on_multichoice_change(attr, old, new):
     rebuild()
+
+
+def on_plot_stat_change(attr, old, new):
+    show_stat = 0 in w_plot_stat.active
+    for fname in w_multichoice.value:
+        rows[fname]['stat_line'].visible = show_stat
 
 
 # --- Per-image widget callbacks ---
@@ -401,6 +429,7 @@ for _s in [w_a, w_b, w_c]:
 w_row_agg.on_change('value', on_shared_change)
 w_func.on_change('value', on_shared_change)
 w_multichoice.on_change('value', on_multichoice_change)
+w_plot_stat.on_change('active', on_plot_stat_change)
 
 for _slider, _lo, _hi, _steps in [(w_a, w_a_lo, w_a_hi, w_a_steps),
                                     (w_b, w_b_lo, w_b_hi, w_b_steps),
