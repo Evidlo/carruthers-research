@@ -96,8 +96,8 @@ w_row_stat = TextInput(title="Row Statistic",
 w_clip_rows = TextInput(title="Clip Rows",
                         value=_get('clip_rows', 'None'),
                         width=300)
-w_clip = Slider(title="Image Clip Level", value=_get('clip', 50.0),
-                start=1, end=500, step=1, width=250)
+w_clip = Slider(title="Image Clip Level (%)", value=_get('clip', 100.0),
+                start=0, end=100, step=1, width=250)
 w_selected_col = Slider(title="Selected Column", value=_get('selected_col', 300),
                         start=0, end=1000, step=1, width=250)
 w_err = Div(text="", width=300)
@@ -201,8 +201,17 @@ def refresh(update_scatter_limits=True):
     try:
         clip_rows_val = w_clip_rows.value.strip()
         clip_rows = None if clip_rows_val.lower() == 'none' else json.loads(clip_rows_val)
-        clip_level = w_clip.value
+        clip_pct = w_clip.value
         selected_col = int(w_selected_col.value)
+
+        # Get image to compute clip level from percentage
+        x_raw = images[fname].copy()
+        if clip_rows is not None:
+            x_raw = x_raw[clip_rows[0]:clip_rows[1]]
+
+        # Convert percentage to actual clip level
+        img_min, img_max = x_raw.min(), x_raw.max()
+        clip_level = img_min + (img_max - img_min) * (clip_pct / 100.0)
 
         im, stat, selected_data, percentiles = compute(
             fname, clip_level, selected_col, w_row_stat.value, clip_rows)
