@@ -65,11 +65,12 @@ def compute(file_name, clip_level, selected_col, row_stat_str, clip_rows):
     clipped_x = np.clip(x, 0, clip_level)
 
     # Compute percentiles for scatter plot limits
-    stat_pos, x_pos = stat, x
-    stat_start, stat_stop = (np.percentile(stat_pos, [10, 90]) if len(stat_pos) > 0
-                          else (1, 10))
-    y_start, y_stop = (np.percentile(x_pos, [5, 95]) if len(x_pos) > 0
-                    else (1, 10))
+    stat_start, stat_stop = (
+        np.percentile(stat, [10, 90]) if len(stat) > 0 else (1, 10)
+    )
+    y_start, y_stop = (
+        np.percentile(selected_data, [5, 95]) if len(selected_data) > 0 else (1, 10)
+    )
 
     return (
         clipped_x, stat, selected_data,
@@ -158,8 +159,8 @@ fig_img.add_tools(TapTool())
 # Plot 3: Scatter plot (stat vs selected column)
 fig_scatter = figure(title="Statistic vs Y",
                      x_axis_label="Row Statistic", y_axis_label="Selected Y",
-                     x_axis_type="log", y_axis_type="linear",
-                     x_range=Range1d(1, 10), y_range=Range1d(1, 10),
+                     x_axis_type="linear", y_axis_type="linear",
+                     # x_range=Range1d(1, 10), y_range=Range1d(1, 10),
                      sizing_mode='stretch_both', min_height=250,
                      tools="pan,wheel_zoom,box_zoom,reset,save")
 fig_scatter.xaxis.axis_label_text_color = 'red'
@@ -249,10 +250,11 @@ def refresh(update_scatter_limits=True):
 
         # Only update scatter limits when not just changing selected_col
         if update_scatter_limits:
-            fig_scatter.x_range.start = stat_start
-            fig_scatter.x_range.end = stat_stop
-            fig_scatter.y_range.start = y_start
-            fig_scatter.y_range.end = y_stop
+            pass
+            # fig_scatter.x_range.start = stat_start
+            # fig_scatter.x_range.end = stat_stop
+            # fig_scatter.y_range.start = y_start
+            # fig_scatter.y_range.end = y_stop
 
         w_err.text = ""
     except Exception as e:
