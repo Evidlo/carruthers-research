@@ -9,7 +9,7 @@ import traceback
 from bokeh.plotting import figure
 from bokeh.io import curdoc
 from bokeh.models import (ColumnDataSource, Slider, Select,
-                          TextInput, Div, LinearColorMapper, DataRange1d,
+                          TextInput, TextAreaInput, Div, LinearColorMapper, DataRange1d,
                           Range1d, CustomJS, Button, Span, TapTool, LinearAxis)
 from bokeh.events import Tap
 from bokeh.layouts import row, column
@@ -39,20 +39,27 @@ def _get(key, default):
 
 # --- Load images once ---
 images = {f: np.load(f'images/{f}.npy') / 300 for f in FILE_OPTIONS}
-
+darks = {f: np.load(f'images/dark_{f.split("_", 1)[1]}.npy') / 300 for f in FILE_OPTIONS}
 
 # --- Computation ---
-def compute(file_name, clip_level, selected_col, row_stat_str, clip_rows):
+def compute(file_name, clip_level, selected_col, row_stat_str, func_str, clip_rows):
     x = images[file_name].copy()
+    dark = darks[file_name].copy()
     h, w = x.shape
     if clip_rows is not None:
         x = x[clip_rows[0]:clip_rows[1]]
+        dark = dark[clip_rows[0]:clip_rows[1]]
     nrows, ncols = x.shape
 
     # Compute row statistic via exec
-    ns = {'x': x, 'np': np}
+    ns = {'x': x, 'np': np, 'dark': dark}
     exec(row_stat_str, ns)
     stat = ns.get('s')
+
+    # Execute custom function
+    exec(func_str, ns)
+    x = ns['x']
+
     if stat is not None:
         stat = stat.flatten()
     else:
@@ -94,6 +101,8 @@ w_file = Select(title="Image", options=FILE_OPTIONS, value=_init_file_str, width
 w_row_stat = TextInput(title="Row Statistic",
                        value=_get('row_stat', 's = np.sum(x, axis=1)'),
                        width=300)
+w_func = TextAreaInput(title="Function",
+                       value=_get('func', 'x = x'), width=300, rows=6)
 w_clip_rows = TextInput(title="Clip Rows",
                         value=_get('clip_rows', 'None'),
                         width=300)
@@ -172,6 +181,7 @@ w_copy = Button(label="Copy Settings", width=150)
 w_copy.js_on_click(CustomJS(args=dict(
     w_file=w_file,
     w_row_stat=w_row_stat,
+    w_func=w_func,
     w_clip_rows=w_clip_rows,
     w_clip=w_clip,
     w_selected_col=w_selected_col,
@@ -179,6 +189,7 @@ w_copy.js_on_click(CustomJS(args=dict(
     const p = new URLSearchParams();
     p.set('file', w_file.value);
     p.set('row_stat', w_row_stat.value);
+    p.set('func', w_func.value);
     p.set('clip_rows', w_clip_rows.value);
     p.set('clip', String(w_clip.value));
     p.set('selected_col', String(w_selected_col.value));
@@ -215,7 +226,7 @@ def refresh(update_scatter_limits=True):
         clip_level = img_min + (img_max - img_min) * (clip_pct / 100.0)
 
         im, stat, selected_data, percentiles = compute(
-            fname, clip_level, selected_col, w_row_stat.value, clip_rows)
+            fname, clip_level, selected_col, w_row_stat.value, w_func.value, clip_rows)
         stat_start, stat_stop, y_start, y_stop = percentiles
         nr, nc = im.shape
 
@@ -274,6 +285,7 @@ def on_col_change(attr, old, new):
 # Wire up callbacks
 w_file.on_change('value', on_change)
 w_row_stat.on_change('value', on_change)
+w_func.on_change('value', on_change)
 w_clip_rows.on_change('value', on_change)
 w_clip.on_change('value_throttled', on_change)
 w_selected_col.on_change('value_throttled', on_col_change)
@@ -298,6 +310,7 @@ w_selected_col.js_on_change('value', CustomJS(args=dict(span=col_span), code="""
 controls = column(
     w_file,
     w_row_stat,
+    w_func,
     w_clip_rows,
     w_clip,
     w_selected_col,
