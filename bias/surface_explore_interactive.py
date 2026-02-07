@@ -70,9 +70,8 @@ def compute_values(a, b, transform_code):
         dark = namespace.get('dark', dark)
         y = namespace.get('y', img - dark)
         s = namespace.get('s', np.sum(img, axis=1))
-    except:
-        y = img - dark
-        s = np.sum(img, axis=1)
+    except Exception as e:
+        print(e)
     return dark, y, s
 
 @app.callback(
