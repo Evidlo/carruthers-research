@@ -8,7 +8,17 @@ from urllib.parse import urlencode, parse_qs
 import json
 
 img = np.load('images/oob_nfi_l0.npy')[100:512]
+topdark = np.load('images/oob_nfi_l0_topdark.npy').mean(axis=0, keepdims=True)
+topbias = np.load('images/oob_nfi_l0_topbias.npy').mean(axis=0, keepdims=True)
 dark_orig = np.load('images/dark_nfi_l0.npy')[100:512]
+
+# compute robust bias
+m = img[0:150]
+mask = np.logical_and(
+    m > np.percentile(m, 40, axis=0, keepdims=True),
+    m < np.percentile(m, 60, axis=0, keepdims=True)
+)
+robbias = np.ma.array(m, mask=mask).mean(axis=0, keepdims=True)
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], url_base_pathname='/surface/')
 
@@ -17,6 +27,9 @@ app.layout = dbc.Container([
     dcc.Store(id='initialized', data=False),
     dbc.Row([
         dbc.Col([
+            html.Label('Transform:'),
+            dcc.Textarea(id='transform', value='dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)', style={'width': '100%', 'height': 200}),
+            html.Br(),
             html.Label('a:'),
             dcc.Slider(id='slider-a', min=0, max=2, step=0.004, value=1.0, marks={i: str(i) for i in [0, 0.5, 1, 1.5, 2]}),
             dbc.Row([
@@ -33,11 +46,9 @@ app.layout = dbc.Container([
                 dbc.Col(dcc.Input(id='b-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
             ]),
             html.Br(),
-            html.Label('Transform (use "dark", "a", "b", "img", "np"):'),
-            dcc.Textarea(id='transform', value='dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)', style={'width': '100%', 'height': 100}),
-            html.Br(),
-            html.Label('Selected columns (comma-separated):'),
-            dcc.Input(id='cols', value='120,121,122,123,124,125,126,127,128,129,130', style={'width': '100%'}),
+            html.Label('Selected columns:'),
+            dcc.RangeSlider(id='cols', min=0, max=img.shape[1] - 1, step=1, value=[100, 120],
+                            marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
             html.Br(),
             html.Br(),
             dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
@@ -65,7 +76,10 @@ def compute_values(a, b, transform_code):
     """Helper function to compute dark, y, s from transform code"""
     dark = dark_orig.copy()
     try:
-        namespace = {'dark': dark, 'a': a, 'b': b, 'img': img, 'np': np}
+        namespace = {
+            'dark': dark, 'a': a, 'b': b, 'img': img, 'np': np,
+            'topbias': topbias, 'topdark': topdark, 'robbias':robbias
+        }
         exec(transform_code, namespace)
         dark = namespace.get('dark', dark)
         y = namespace.get('y', img - dark)
@@ -81,13 +95,9 @@ def compute_values(a, b, transform_code):
     Input('transform', 'value'),
     Input('cols', 'value')
 )
-def update_3d_plot(a, b, transform_code, cols_str):
+def update_3d_plot(a, b, transform_code, col_range):
     dark, y, s = compute_values(a, b, transform_code)
-
-    try:
-        selected_cols = [int(c.strip()) for c in cols_str.split(',')]
-    except:
-        selected_cols = [127, 128]
+    selected_cols = list(range(col_range[0], col_range[1] + 1))
 
     fig_3d = go.Figure()
     for col in selected_cols:
@@ -97,7 +107,12 @@ def update_3d_plot(a, b, transform_code, cols_str):
         ))
 
     fig_3d.update_layout(
-        scene=dict(xaxis_title='Dark', yaxis_title='Sum', zaxis_title='Image'),
+        scene=dict(
+            xaxis_title='Dark',
+            yaxis_title='Sum',
+            zaxis_title='Y',
+            camera=dict(projection=dict(type='orthographic'))
+        ),
         title='3D Scatter',
         margin=dict(l=0, r=0, t=40, b=0),
         uirevision='constant'
@@ -146,7 +161,8 @@ def update_2d_plot(n_clicks, a, b, transform_code):
 )
 def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min, b_max, b_steps):
     params = {
-        'a': a, 'b': b, 'transform': transform, 'cols': cols,
+        'a': a, 'b': b, 'transform': transform,
+        'col_start': cols[0], 'col_stop': cols[1],
         'a_min': a_min, 'a_max': a_max, 'a_steps': a_steps,
         'b_min': b_min, 'b_max': b_max, 'b_steps': b_steps
     }
@@ -172,14 +188,14 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 def load_from_url(search, initialized):
     default_transform = 'dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)'
     if initialized or not search:
-        return [1, 0, default_transform, '120,121,122,123,124,125,126,127,128,129,130', 0, 2, 500, -10, 10, 500, True]
+        return [1, 0, default_transform, [100, 120], 0, 2, 500, -10, 10, 500, True]
 
     params = parse_qs(search.lstrip('?'))
     return [
         float(params.get('a', [1])[0]),
         float(params.get('b', [0])[0]),
         params.get('transform', [default_transform])[0],
-        params.get('cols', ['120,121,122,123,124,125,126,127,128,129,130'])[0],
+        [int(params.get('col_start', [100])[0]), int(params.get('col_stop', [120])[0])],
         float(params.get('a_min', [0])[0]),
         float(params.get('a_max', [2])[0]),
         int(params.get('a_steps', [500])[0]),
