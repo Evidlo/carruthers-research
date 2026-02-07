@@ -38,8 +38,8 @@ def _get(key, default):
 
 
 # --- Load images once ---
-images = {f: np.load(f'images/{f}.npy') / 300 for f in FILE_OPTIONS}
-darks = {f: np.load(f'images/dark_{f.split("_", 1)[1]}.npy') / 300 for f in FILE_OPTIONS}
+images = {f: np.load(f'images/{f}.npy') for f in FILE_OPTIONS}
+darks = {f: np.load(f'images/dark_{f.split("_", 1)[1]}.npy') for f in FILE_OPTIONS}
 
 # --- Computation ---
 def compute(file_name, clip_level, selected_col, row_stat_str, func_str, clip_rows):

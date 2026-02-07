@@ -40,25 +40,29 @@ app.layout = dbc.Container([
             dcc.Input(id='cols', value='120,121,122,123,124,125,126,127,128,129,130', style={'width': '100%'}),
             html.Br(),
             html.Br(),
+            dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
+            html.Br(),
+            html.Br(),
             dbc.Button('Generate Settings URL', id='copy-btn', color='primary', size='sm'),
             html.Br(),
             html.Br(),
             dcc.Input(id='settings-url', type='text', readOnly=True, style={'width': '100%', 'fontSize': '11px'})
         ], width=3),
         dbc.Col([
-            dcc.Graph(id='plot', style={'height': '95vh'})
+            dbc.Row([
+                dbc.Col([
+                    dcc.Graph(id='plot-3d', style={'height': '95vh'})
+                ], width=6),
+                dbc.Col([
+                    dcc.Graph(id='plot-2d', style={'height': '95vh'})
+                ], width=6)
+            ])
         ], width=9)
     ])
 ], fluid=True)
 
-@app.callback(
-    Output('plot', 'figure'),
-    Input('slider-a', 'value'),
-    Input('slider-b', 'value'),
-    Input('transform', 'value'),
-    Input('cols', 'value')
-)
-def update_plot(a, b, transform_code, cols_str):
+def compute_values(a, b, transform_code):
+    """Helper function to compute dark, y, s from transform code"""
     dark = dark_orig.copy()
     try:
         namespace = {'dark': dark, 'a': a, 'b': b, 'img': img, 'np': np}
@@ -69,26 +73,62 @@ def update_plot(a, b, transform_code, cols_str):
     except:
         y = img - dark
         s = np.sum(img, axis=1)
+    return dark, y, s
+
+@app.callback(
+    Output('plot-3d', 'figure'),
+    Input('slider-a', 'value'),
+    Input('slider-b', 'value'),
+    Input('transform', 'value'),
+    Input('cols', 'value')
+)
+def update_3d_plot(a, b, transform_code, cols_str):
+    dark, y, s = compute_values(a, b, transform_code)
 
     try:
         selected_cols = [int(c.strip()) for c in cols_str.split(',')]
     except:
         selected_cols = [127, 128]
 
-    fig = go.Figure()
+    fig_3d = go.Figure()
     for col in selected_cols:
-        fig.add_trace(go.Scatter3d(
-            x=dark_orig[:, col], y=s, z=y[:, col], mode='markers',
+        fig_3d.add_trace(go.Scatter3d(
+            x=dark[:, col], y=s, z=y[:, col], mode='markers',
             marker=dict(size=2), name=f'col {col}'
         ))
 
-    fig.update_layout(
+    fig_3d.update_layout(
         scene=dict(xaxis_title='Dark', yaxis_title='Sum', zaxis_title='Image'),
-        title='Surface Exploration',
+        title='3D Scatter',
         margin=dict(l=0, r=0, t=40, b=0),
         uirevision='constant'
     )
-    return fig
+
+    return fig_3d
+
+@app.callback(
+    Output('plot-2d', 'figure'),
+    Input('update-2d-btn', 'n_clicks'),
+    State('slider-a', 'value'),
+    State('slider-b', 'value'),
+    State('transform', 'value'),
+    prevent_initial_call=True
+)
+def update_2d_plot(n_clicks, a, b, transform_code):
+    dark, y, s = compute_values(a, b, transform_code)
+
+    fig_2d = go.Figure(data=go.Heatmap(
+        z=y,
+        colorscale='Viridis'
+    ))
+    fig_2d.update_layout(
+        title='Y (2D)',
+        yaxis=dict(scaleanchor='x', scaleratio=1),
+        margin=dict(l=0, r=0, t=40, b=0),
+        uirevision='constant'
+    )
+
+    return fig_2d
 
 @app.callback(
     Output('settings-url', 'value'),
@@ -133,11 +173,11 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 def load_from_url(search, initialized):
     default_transform = 'dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)'
     if initialized or not search:
-        return [0.997, 0, default_transform, '120,121,122,123,124,125,126,127,128,129,130', 0, 2, 500, -10, 10, 500, True]
+        return [1, 0, default_transform, '120,121,122,123,124,125,126,127,128,129,130', 0, 2, 500, -10, 10, 500, True]
 
     params = parse_qs(search.lstrip('?'))
     return [
-        float(params.get('a', [0.997])[0]),
+        float(params.get('a', [1])[0]),
         float(params.get('b', [0])[0]),
         params.get('transform', [default_transform])[0],
         params.get('cols', ['120,121,122,123,124,125,126,127,128,129,130'])[0],
