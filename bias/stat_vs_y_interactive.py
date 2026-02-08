@@ -3,12 +3,13 @@
 # Run with: bokeh serve stat_vs_y_interactive.py --show --allow-websocket-origin=*
 
 import json
+import math
 import numpy as np
 from pathlib import Path
 import traceback
 from bokeh.plotting import figure
 from bokeh.io import curdoc
-from bokeh.models import (ColumnDataSource, Slider, Select,
+from bokeh.models import (ColumnDataSource, Slider, Spinner, Select,
                           TextInput, TextAreaInput, Div, LinearColorMapper, DataRange1d,
                           Range1d, CustomJS, Button, Span, TapTool, LinearAxis)
 from bokeh.events import Tap
@@ -35,6 +36,38 @@ def _get(key, default):
         except (ValueError, IndexError):
             pass
     return default
+
+
+def _step(lo, hi, steps):
+    return (hi - lo) / max(steps, 1)
+
+
+def _format(step):
+    if step <= 0 or step >= 1:
+        return "0[.]0"
+    d = min(math.ceil(-math.log10(step)), 6)
+    return "0." + "0" * d
+
+
+# --- Helper: slider group (slider + lo/hi/steps spinners) ---
+def _make_slider_group(title, value, lo, hi, steps, spinner_step):
+    s = _step(lo, hi, steps)
+    slider = Slider(title=title, value=value,
+                    start=lo, end=hi,
+                    step=s, format=_format(s), width=250)
+    w_lo = Spinner(title="Start", value=lo, step=spinner_step, width=80)
+    w_hi = Spinner(title="Stop", value=hi, step=spinner_step, width=80)
+    w_steps = Spinner(title="Steps", value=steps, step=1, low=1, width=80)
+    return dict(slider=slider, lo=w_lo, hi=w_hi, steps=w_steps)
+
+
+def _update_slider_range(sg):
+    """Recompute step from lo/hi/steps spinners and update the slider."""
+    step = _step(sg['lo'].value, sg['hi'].value, sg['steps'].value)
+    sg['slider'].start = sg['lo'].value
+    sg['slider'].end = sg['hi'].value
+    sg['slider'].step = step
+    sg['slider'].format = _format(step)
 
 
 # --- Load images once ---
@@ -106,8 +139,12 @@ w_func = TextAreaInput(title="Function",
 w_clip_rows = TextInput(title="Clip Rows",
                         value=_get('clip_rows', 'None'),
                         width=300)
-w_clip = Slider(title="Image Clip Level (%)", value=_get('clip', 100.0),
-                start=0, end=100, step=1, width=250)
+w_clip = _make_slider_group("Image Clip Level (%)",
+                            _get('clip', 100.0),
+                            _get('clip_lo', 0.0),
+                            _get('clip_hi', 100.0),
+                            _get('clip_steps', 100),
+                            1)
 w_selected_col = Slider(title="Selected Column", value=_get('selected_col', 300),
                         start=0, end=1000, step=1, width=250)
 w_err = Div(text="", width=300)
@@ -183,7 +220,10 @@ w_copy.js_on_click(CustomJS(args=dict(
     w_row_stat=w_row_stat,
     w_func=w_func,
     w_clip_rows=w_clip_rows,
-    w_clip=w_clip,
+    w_clip=w_clip['slider'],
+    w_clip_lo=w_clip['lo'],
+    w_clip_hi=w_clip['hi'],
+    w_clip_steps=w_clip['steps'],
     w_selected_col=w_selected_col,
 ), code="""
     const p = new URLSearchParams();
@@ -192,6 +232,9 @@ w_copy.js_on_click(CustomJS(args=dict(
     p.set('func', w_func.value);
     p.set('clip_rows', w_clip_rows.value);
     p.set('clip', String(w_clip.value));
+    p.set('clip_lo', String(w_clip_lo.value));
+    p.set('clip_hi', String(w_clip_hi.value));
+    p.set('clip_steps', String(w_clip_steps.value));
     p.set('selected_col', String(w_selected_col.value));
 
     const url = window.location.origin + window.location.pathname + '?' + p.toString();
@@ -213,7 +256,7 @@ def refresh(update_scatter_limits=True):
     try:
         clip_rows_val = w_clip_rows.value.strip()
         clip_rows = None if clip_rows_val.lower() == 'none' else json.loads(clip_rows_val)
-        clip_pct = w_clip.value
+        clip_pct = w_clip['slider'].value
         selected_col = int(w_selected_col.value)
 
         # Get image to compute clip level from percentage
@@ -287,8 +330,18 @@ w_file.on_change('value', on_change)
 w_row_stat.on_change('value', on_change)
 w_func.on_change('value', on_change)
 w_clip_rows.on_change('value', on_change)
-w_clip.on_change('value_throttled', on_change)
+w_clip['slider'].on_change('value_throttled', on_change)
 w_selected_col.on_change('value_throttled', on_col_change)
+
+
+def on_clip_range_change(attr, old, new):
+    _update_slider_range(w_clip)
+    refresh(update_scatter_limits=True)
+
+
+w_clip['lo'].on_change('value', on_clip_range_change)
+w_clip['hi'].on_change('value', on_clip_range_change)
+w_clip['steps'].on_change('value', on_clip_range_change)
 
 
 def on_tap(event):
@@ -312,7 +365,8 @@ controls = column(
     w_row_stat,
     w_func,
     w_clip_rows,
-    w_clip,
+    w_clip['slider'],
+    row(w_clip['lo'], w_clip['hi'], w_clip['steps']),
     w_selected_col,
     w_copy,
     w_err,
