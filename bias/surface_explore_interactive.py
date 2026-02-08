@@ -7,10 +7,17 @@ import dash_bootstrap_components as dbc
 from urllib.parse import urlencode, parse_qs
 import json
 
-img = np.load('images/oob_nfi_l0.npy')[100:512]
-topdark = np.load('images/oob_nfi_l0_topdark.npy').mean(axis=0, keepdims=True)
-topbias = np.load('images/oob_nfi_l0_topbias.npy').mean(axis=0, keepdims=True)
-dark_orig = np.load('images/dark_nfi_l0.npy')[100:512]
+# Load full images at module level
+img_full = np.load('images/oob_nfi_l0.npy')
+topdark_full = np.load('images/oob_nfi_l0_topdark.npy').mean(axis=0, keepdims=True)
+topbias_full = np.load('images/oob_nfi_l0_topbias.npy').mean(axis=0, keepdims=True)
+dark_full = np.load('images/dark_nfi_l0.npy')
+
+default_setup = """\
+img = img[100:512]
+dark = dark[100:512]
+topdark = topdark
+topbias = topbias
 
 # compute robust bias
 m = img[0:150]
@@ -18,104 +25,154 @@ mask = np.logical_and(
     m > np.percentile(m, 40, axis=0, keepdims=True),
     m < np.percentile(m, 60, axis=0, keepdims=True)
 )
-robbias = np.ma.array(m, mask=mask).mean(axis=0, keepdims=True)
+robbias = np.ma.array(m, mask=mask).mean(axis=0, keepdims=True)"""
+
+default_transform = """\
+x = dark * a + b
+y = img - dark
+s = np.sum(img, axis=1)"""
+
+# Global namespace shared between setup and transform
+namespace = {
+    'np': np,
+    'img': img_full.copy(),
+    'dark': dark_full.copy(),
+    'topdark': topdark_full.copy(),
+    'topbias': topbias_full.copy()
+}
+
+# Run default setup at startup
+exec(default_setup, namespace)
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], url_base_pathname='/surface/')
 
 app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='initialized', data=False),
+    dcc.Store(id='setup-executed', data=0),
     dbc.Row([
         dbc.Col([
-            html.Label('Transform:'),
-            dcc.Textarea(id='transform', value='dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)', style={'width': '100%', 'height': 200}),
-            html.Br(),
-            html.Label('a:'),
-            dcc.Slider(id='slider-a', min=0, max=2, step=0.004, value=1.0, marks={i: str(i) for i in [0, 0.5, 1, 1.5, 2]}),
-            dbc.Row([
-                dbc.Col(dcc.Input(id='a-min', type='number', value=0, placeholder='Start', size='sm'), width=4),
-                dbc.Col(dcc.Input(id='a-max', type='number', value=2, placeholder='Stop', size='sm'), width=4),
-                dbc.Col(dcc.Input(id='a-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
+            dbc.Tabs([
+                dbc.Tab(label='Setup', children=[
+                    html.Br(),
+                    html.Label('Setup:'),
+                    dcc.Textarea(id='setup', value=default_setup, style={'width': '100%', 'height': 400}),
+                    html.Br(),
+                    html.Label('Selected columns:'),
+                    dcc.RangeSlider(id='cols', min=0, max=img_full.shape[1] - 1, step=1, value=[100, 120],
+                                    marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
+                    html.Br(),
+                    html.Br(),
+                    dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
+                    html.Br(),
+                    html.Br(),
+                    dbc.Button('Generate Settings URL', id='copy-btn', color='primary', size='sm'),
+                    html.Br(),
+                    html.Br(),
+                    dcc.Input(id='settings-url', type='text', readOnly=True, style={'width': '100%', 'fontSize': '11px'})
+                ]),
+                dbc.Tab(label='Transform', children=[
+                    html.Br(),
+                    html.Label('Transform:'),
+                    dcc.Textarea(id='transform', value=default_transform, style={'width': '100%', 'height': 400}),
+                    html.Br(),
+                    html.Label('a:'),
+                    dcc.Slider(id='slider-a', min=0, max=2, step=0.004, value=1.0, marks={i: str(i) for i in [0, 0.5, 1, 1.5, 2]}),
+                    dbc.Row([
+                        dbc.Col(dcc.Input(id='a-min', type='number', value=0, placeholder='Start', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='a-max', type='number', value=2, placeholder='Stop', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='a-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
+                    ]),
+                    html.Br(),
+                    html.Label('b:'),
+                    dcc.Slider(id='slider-b', min=-10, max=10, step=0.04, value=0, marks={i: str(i) for i in range(-10, 11, 5)}),
+                    dbc.Row([
+                        dbc.Col(dcc.Input(id='b-min', type='number', value=-10, placeholder='Start', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='b-max', type='number', value=10, placeholder='Stop', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='b-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
+                    ]),
+                ]),
             ]),
-            html.Br(),
-            html.Label('b:'),
-            dcc.Slider(id='slider-b', min=-10, max=10, step=0.04, value=0, marks={i: str(i) for i in range(-10, 11, 5)}),
-            dbc.Row([
-                dbc.Col(dcc.Input(id='b-min', type='number', value=-10, placeholder='Start', size='sm'), width=4),
-                dbc.Col(dcc.Input(id='b-max', type='number', value=10, placeholder='Stop', size='sm'), width=4),
-                dbc.Col(dcc.Input(id='b-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
-            ]),
-            html.Br(),
-            html.Label('Selected columns:'),
-            dcc.RangeSlider(id='cols', min=0, max=img.shape[1] - 1, step=1, value=[100, 120],
-                            marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
-            html.Br(),
-            html.Br(),
-            dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
-            html.Br(),
-            html.Br(),
-            dbc.Button('Generate Settings URL', id='copy-btn', color='primary', size='sm'),
-            html.Br(),
-            html.Br(),
-            dcc.Input(id='settings-url', type='text', readOnly=True, style={'width': '100%', 'fontSize': '11px'})
-        ], width=3),
+        ], width=4),
         dbc.Col([
             dbc.Row([
                 dbc.Col([
-                    dcc.Graph(id='plot-3d', style={'height': '95vh'})
-                ], width=6),
+                    dcc.Graph(id='plot-3d', style={'height': '80vh'})
+                ], width=7),
                 dbc.Col([
-                    dcc.Graph(id='plot-2d', style={'height': '95vh'})
-                ], width=6)
+                    dcc.Graph(id='plot-2d', style={'height': '80vh'})
+                ], width=5)
             ])
-        ], width=9)
+        ], width=8)
     ])
 ], fluid=True)
 
-def compute_values(a, b, transform_code):
-    """Helper function to compute dark, y, s from transform code"""
-    dark = dark_orig.copy()
+@app.callback(
+    Output('setup-executed', 'data'),
+    Input('setup', 'value')
+)
+def execute_setup(setup_code):
+    """Run setup code and update global namespace."""
+    global namespace
     try:
+        # Reset namespace with full images
         namespace = {
-            'dark': dark, 'a': a, 'b': b, 'img': img, 'np': np,
-            'topbias': topbias, 'topdark': topdark, 'robbias':robbias
+            'np': np,
+            'img': img_full.copy(),
+            'dark': dark_full.copy(),
+            'topdark': topdark_full.copy(),
+            'topbias': topbias_full.copy()
         }
-        exec(transform_code, namespace)
-        dark = namespace.get('dark', dark)
-        y = namespace.get('y', img - dark)
-        s = namespace.get('s', np.sum(img, axis=1))
+        exec(setup_code, namespace)
     except Exception as e:
-        print(e)
-    return dark, y, s
+        print(f'Setup error: {e}')
+    return hash(setup_code)
+
+def compute_transform(a, b, transform_code):
+    """Run transform code on existing namespace to compute x, y, s."""
+    try:
+        namespace['a'] = a
+        namespace['b'] = b
+        exec(transform_code, namespace)
+        x = namespace.get('x', namespace.get('dark', np.zeros((1, 1))))
+        y = namespace.get('y', namespace.get('img', np.zeros((1, 1))))
+        s = namespace.get('s', np.sum(namespace.get('img', np.zeros((1, 1))), axis=1))
+    except Exception as e:
+        print(f'Transform error: {e}')
+        x = namespace.get('dark', np.zeros((1, 1)))
+        y = namespace.get('img', np.zeros((1, 1)))
+        s = np.sum(y, axis=1)
+    return x, y, s
 
 @app.callback(
     Output('plot-3d', 'figure'),
     Input('slider-a', 'value'),
     Input('slider-b', 'value'),
     Input('transform', 'value'),
-    Input('cols', 'value')
+    Input('cols', 'value'),
+    Input('setup-executed', 'data')
 )
-def update_3d_plot(a, b, transform_code, col_range):
-    dark, y, s = compute_values(a, b, transform_code)
+def update_3d_plot(a, b, transform_code, col_range, _):
+    x, y, s = compute_transform(a, b, transform_code)
     selected_cols = list(range(col_range[0], col_range[1] + 1))
 
     fig_3d = go.Figure()
     for col in selected_cols:
         fig_3d.add_trace(go.Scatter3d(
-            x=dark[:, col], y=s, z=y[:, col], mode='markers',
+            x=x[:, col], y=s, z=y[:, col], mode='markers',
             marker=dict(size=2), name=f'col {col}'
         ))
 
     fig_3d.update_layout(
         scene=dict(
-            xaxis_title='Dark',
-            yaxis_title='Sum',
-            zaxis_title='Y',
+            xaxis_title='x',
+            yaxis_title='s',
+            zaxis_title='y',
             camera=dict(projection=dict(type='orthographic'))
         ),
         title='3D Scatter',
         margin=dict(l=0, r=0, t=40, b=0),
-        uirevision='constant'
+        uirevision='scene'
     )
 
     return fig_3d
@@ -129,14 +186,14 @@ def update_3d_plot(a, b, transform_code, col_range):
     prevent_initial_call=True
 )
 def update_2d_plot(n_clicks, a, b, transform_code):
-    dark, y, s = compute_values(a, b, transform_code)
+    x, y, s = compute_transform(a, b, transform_code)
 
     fig_2d = go.Figure(data=go.Heatmap(
         z=y,
         colorscale='Viridis'
     ))
     fig_2d.update_layout(
-        title='Y (2D)',
+        title='y (2D)',
         yaxis=dict(scaleanchor='x', scaleratio=1),
         margin=dict(l=0, r=0, t=40, b=0),
         uirevision='constant'
@@ -186,7 +243,6 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
     prevent_initial_call=False
 )
 def load_from_url(search, initialized):
-    default_transform = 'dark = dark * a + b\ny = img - dark\ns = np.sum(img, axis=1)'
     if initialized or not search:
         return [1, 0, default_transform, [100, 120], 0, 2, 500, -10, 10, 500, True]
 
