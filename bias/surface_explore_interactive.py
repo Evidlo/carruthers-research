@@ -25,12 +25,19 @@ mask = np.logical_and(
     m > np.percentile(m, 40, axis=0, keepdims=True),
     m < np.percentile(m, 60, axis=0, keepdims=True)
 )
-robbias = np.ma.array(m, mask=mask).mean(axis=0, keepdims=True)"""
+
+robbias = np.ma.array(m, mask=~mask).mean(axis=0, keepdims=True)
+robbias = robbias.repeat(412, axis=0)
+"""
 
 default_transform = """\
-x = dark * a + b
-y = img - dark
-s = np.sum(img, axis=1)"""
+x = robbias
+y = img - robbias
+s = np.sum(img, axis=1)
+
+y = np.clip(y, -100, 10)
+"""
+
 
 # Global namespace shared between setup and transform
 namespace = {
@@ -134,13 +141,14 @@ def compute_transform(a, b, transform_code):
         namespace['a'] = a
         namespace['b'] = b
         exec(transform_code, namespace)
-        x = namespace.get('x', namespace.get('dark', np.zeros((1, 1))))
-        y = namespace.get('y', namespace.get('img', np.zeros((1, 1))))
-        s = namespace.get('s', np.sum(namespace.get('img', np.zeros((1, 1))), axis=1))
+        x = namespace.get('x', np.zeros((1, 1)))
+        y = namespace.get('y', np.zeros((1, 1)))
+        s = namespace.get('s', np.zeros((1, 1)))
     except Exception as e:
-        print(f'Transform error: {e}')
-        x = namespace.get('dark', np.zeros((1, 1)))
-        y = namespace.get('img', np.zeros((1, 1)))
+        import traceback
+        print(f'Transform error: {traceback.format_exc()}')
+        x = np.zeros((1, 1))
+        y = np.zeros((1, 1))
         s = np.sum(y, axis=1)
     return x, y, s
 
