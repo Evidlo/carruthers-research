@@ -167,12 +167,11 @@ def update_3d_plot(a, b, transform_code, col_range, _):
         scene=dict(
             xaxis_title='x',
             yaxis_title='s',
-            zaxis_title='y',
-            camera=dict(projection=dict(type='orthographic'))
+            zaxis_title='y'
         ),
         title='3D Scatter',
         margin=dict(l=0, r=0, t=40, b=0),
-        uirevision='scene'
+        uirevision='constant'
     )
 
     return fig_3d
