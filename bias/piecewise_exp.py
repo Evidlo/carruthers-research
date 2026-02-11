@@ -45,7 +45,7 @@ def trimmed_norm(x, keep_ratio=0.9):
     return loss.mean()
 
 # p = PWL(num_channels=num_columns, num_breakpoints=3)
-p = FixedPWL(breakpoints=[.005, .015], num_channels=num_columns)
+p = FixedPWL(breakpoints=[.004, .007, .015], num_channels=num_columns)
 # p = Calibrator(keypoints=[[0.01, .05, 1]], monotonicity=[-1])
 # def p(y, s):
 #     pass
@@ -87,15 +87,17 @@ def plot_profile(s, y, fit):
     fig = plt.figure(figsize=(10, 10))
     plt.title(path)
     s_sweep = t.linspace(s.min(), s.max(), 500)[:, None]
-    for i in range(plots:=min(num_columns, 5)):
+    for i in range(plots:=min(num_columns, 3)):
         plt.subplot(plots, 1, i+1)
         plt.plot(s, y[:, i], 'ro', label='data')
-        plt.plot(s, fit.detach()[:, i], 'b', markersize=1, label='PWL')
-        plt.axvline(p.x_positions[0, -1], color='blue')
-        plt.axvline(p.x_positions[0, 0], color='blue')
+        plt.plot(s, fit.detach()[:, i], 'bo', markersize=1, label='PWL')
+        for xpos in p.x_positions[0]:
+            plt.axvline(xpos, color='blue')
         # plt.xscale('log')
         # plt.yscale('log')
-        # plt.xlim([0, 0.15])
+        # plt.xlim([0, 0.01])
+        # plt.ylim([0, 0.51])
+    plt.xscale('log')
     plt.legend()
     plt.tight_layout()
     return fig
