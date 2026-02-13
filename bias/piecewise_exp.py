@@ -6,19 +6,22 @@ import torch as t
 from tqdm import tqdm
 import numpy as np
 
+from common import load
+
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
 num_columns = 400
 
-img = t.from_numpy(np.load(path:='images_20260111/oob_nfi_l0.npy'))
+img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl'))
+img = t.from_numpy(load(path:='images_20260101/dark_nfi_l0.pkl'))
 cols = slice(0, num_columns)
 rows = slice(100, 512)
 y = img[rows, cols]
 s = img.sum(dim=1, keepdim=True)[rows]
 
-m = img[100:250, cols]
+m = img[150:250, cols]
 mask = np.logical_and(
     m.numpy() > np.percentile(m, 40, axis=0, keepdims=True),
     m.numpy() < np.percentile(m, 60, axis=0, keepdims=True)
@@ -93,11 +96,10 @@ def plot_profile(s, y, fit):
         plt.plot(s, fit.detach()[:, i], 'bo', markersize=1, label='PWL')
         for xpos in p.x_positions[0]:
             plt.axvline(xpos, color='blue')
-        # plt.xscale('log')
-        # plt.yscale('log')
+        plt.xscale('log')
+        plt.yscale('log')
         # plt.xlim([0, 0.01])
         # plt.ylim([0, 0.51])
-    plt.xscale('log')
     plt.legend()
     plt.tight_layout()
     return fig

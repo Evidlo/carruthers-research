@@ -16,7 +16,15 @@ from bokeh.events import Tap
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256
 
-FILE_OPTIONS = [f.stem for f in sorted(Path('images').glob('*.npy'))]
+from common import load
+
+
+# --- Load images once ---
+IMAGE_DIR = Path('images_20260111')
+images = {f.stem: load(f) for f in IMAGE_DIR.glob('*.pkl') if not f.stem.startswith('dark_')}
+darks = {k: load(IMAGE_DIR / f'dark_{k.split("_", 1)[1]}.pkl') for k in images}
+
+FILE_OPTIONS = sorted(images)
 
 # --- Parse URL query params ---
 _raw_args = {}
@@ -70,9 +78,6 @@ def _update_slider_range(sg):
     sg['slider'].format = _format(step)
 
 
-# --- Load images once ---
-images = {f: np.load(f'images/{f}.npy') for f in FILE_OPTIONS}
-darks = {f: np.load(f'images/dark_{f.split("_", 1)[1]}.npy') for f in FILE_OPTIONS}
 
 # --- Computation ---
 def compute(file_name, clip_level, selected_col, row_stat_str, func_str, clip_rows):

@@ -8,14 +8,21 @@ import numpy as np
 from pathlib import Path
 from bokeh.plotting import figure
 from bokeh.io import curdoc
-from bokeh.models import (ColumnDataSource, Slider, Spinner, MultiChoice,
+from bokeh.models import (ColumnDataSource, Slider, Spinner, MultiChoice, Select,
                           TextInput, Div, LinearColorMapper, DataRange1d,
-                          Range1d, CustomJS, Button, LinearAxis, CheckboxGroup)
+                          Range1d, CustomJS, Button, LinearAxis, CheckboxGroup,
+                          HoverTool)
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
 
+from common import load, mean_bias
+
 DEFAULT_GROUPS = [[0, 0.25], [0.25, 0.75], [0.75, 1]]
-FILE_OPTIONS = [f.stem for f in sorted(Path('images').glob('*.npy'))]
+IMAGE_FOLDERS = sorted([p.name for p in Path('.').glob('images_*') if p.is_dir()])
+ALL_FILES = {}  # folder -> list of stems
+for _folder in IMAGE_FOLDERS:
+    ALL_FILES[_folder] = [f.stem for f in sorted(Path(_folder).glob('*.pkl'))]
+FILE_OPTIONS = sorted(set(f for flist in ALL_FILES.values() for f in flist))
 
 SLIDER_DEFS = [
     # (name, default, lo, hi, steps, spinner_step)
@@ -89,13 +96,16 @@ def _make_collapsible(label):
 
 
 # --- Load images once ---
-images = {f: np.load(f'images/{f}.npy') / 300 for f in FILE_OPTIONS}
+images = {}
+for _folder in IMAGE_FOLDERS:
+    for _f in ALL_FILES[_folder]:
+        images[(_folder, _f)] = load(f'{_folder}/{_f}.pkl')
 
 
 # --- Computation ---
-def compute(file_name, clip_level, row_agg_str, func_str, params, col_groups):
-    x = images[file_name].copy()
-    ns = {'x': x, 'np': np, **params}
+def compute(folder, file_name, clip_level, row_agg_str, func_str, params, col_groups):
+    x = images[(folder, file_name)].copy()
+    ns = {'x': x, 'np': np, 'mean_bias': mean_bias, **params}
     exec(row_agg_str, ns)
     s = ns.get('s')
     exec(func_str, ns)
@@ -136,7 +146,7 @@ def _make_per_image(fname):
     clip_val = _get(f'clip.{fname}', 25.0)
     groups_val = _get(f'groups.{fname}', json.dumps(DEFAULT_GROUPS))
     clip_lo_val = _get(f'clip_lo.{fname}', 0.0)
-    clip_hi_val = _get(f'clip_hi.{fname}', 1000.0)
+    clip_hi_val = _get(f'clip_hi.{fname}', 10000.0)
     clip_steps_val = _get(f'clip_steps.{fname}', 500)
 
     try:
@@ -178,8 +188,11 @@ def _make_per_image(fname):
                      sizing_mode='scale_height', width=400, height=400,
                      tools="pan,wheel_zoom,box_zoom,reset,save")
     fig_img.y_range.flipped = True
-    fig_img.image(image='image', source=img_src, x=0, y=0, dw='dw', dh='dh',
-                  color_mapper=mapper)
+    img_renderer = fig_img.image(image='image', source=img_src, x=0, y=0, dw='dw', dh='dh',
+                                 color_mapper=mapper)
+    fig_img.add_tools(HoverTool(renderers=[img_renderer], tooltips=[
+        ("x", "$x{0}"), ("y", "$y{0}"), ("value", "@image"),
+    ]))
     fig_img.multi_line(xs='xs', ys='ys', source=vline_src,
                        line_color='red', line_width=2)
 
@@ -203,6 +216,8 @@ _init_files = [f.strip() for f in _init_files_str.split(',')
 if not _init_files:
     _init_files = [FILE_OPTIONS[0]] if FILE_OPTIONS else []
 
+_init_folder = _get('folder', IMAGE_FOLDERS[0] if IMAGE_FOLDERS else '')
+w_folder = Select(options=IMAGE_FOLDERS, value=_init_folder, width=300)
 w_multichoice = MultiChoice(options=FILE_OPTIONS, value=_init_files, width=300)
 w_plot_stat = CheckboxGroup(labels=["Plot Row Statistic"], active=[0])
 
@@ -306,7 +321,7 @@ def refresh_image(fname):
     r = rows[fname]
     try:
         col_groups = json.loads(r['w_groups'].value)
-        s, im, stat = compute(fname, r['clip']['slider'].value,
+        s, im, stat = compute(w_folder.value, fname, r['clip']['slider'].value,
                               w_row_agg.value, w_func.value,
                               _get_params(), col_groups)
         nr, nc = im.shape
@@ -335,7 +350,9 @@ def refresh_image(fname):
         r['img_src'].data = dict(image=[im], dw=[nc], dh=[nr])
         w_err.text = ""
     except Exception as e:
-        w_err.text = f'<span style="color: red">{e}</span>'
+        import traceback
+        print(traceback.format_exc())
+        w_err.text = f'<span style="color: red">{traceback.format_exc()}</span>'
 
 
 def refresh_all():
@@ -374,6 +391,10 @@ def rebuild():
 
 def on_shared_change(attr, old, new):
     refresh_all()
+
+
+def on_folder_change(attr, old, new):
+    rebuild()
 
 
 def on_multichoice_change(attr, old, new):
@@ -419,6 +440,7 @@ for _name, *_ in SLIDER_DEFS:
 
 w_row_agg.on_change('value', on_shared_change)
 w_func.on_change('value', on_shared_change)
+w_folder.on_change('value', on_folder_change)
 w_multichoice.on_change('value', on_multichoice_change)
 w_plot_stat.on_change('active', on_plot_stat_change)
 
@@ -445,6 +467,7 @@ subtraction_col.children = subtraction_children
 
 controls = column(
     Div(text="<b>Image</b>"),
+    w_folder,
     w_multichoice,
     w_per_image_toggle,
     per_image_col,

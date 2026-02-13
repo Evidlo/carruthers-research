@@ -7,17 +7,19 @@ import dash_bootstrap_components as dbc
 from urllib.parse import urlencode, parse_qs
 import json
 
+from common import load
+
 # Load full images at module level
-img_full = np.load('images/oob_nfi_l0.npy')
-topdark_full = np.load('images/oob_nfi_l0_topdark.npy').mean(axis=0, keepdims=True)
-topbias_full = np.load('images/oob_nfi_l0_topbias.npy').mean(axis=0, keepdims=True)
-dark_full = np.load('images/dark_nfi_l0.npy')
+img_full = load('images_20260111/oob_nfi_l0.pkl')
+# topdark_full = load('images/oob_nfi_l0_topdark.pkl').mean(axis=0, keepdims=True)
+# topbias_full = load('images/oob_nfi_l0_topbias.pkl').mean(axis=0, keepdims=True)
+dark_full = load('images_20260111/dark_nfi_l0.pkl')
 
 default_setup = """\
 img = img[100:512]
 dark = dark[100:512]
-topdark = topdark
-topbias = topbias
+# topdark = topdark
+# topbias = topbias
 
 # compute robust bias
 m = img[0:150]
@@ -44,8 +46,8 @@ namespace = {
     'np': np,
     'img': img_full.copy(),
     'dark': dark_full.copy(),
-    'topdark': topdark_full.copy(),
-    'topbias': topbias_full.copy()
+    # 'topdark': topdark_full.copy(),
+    # 'topbias': topbias_full.copy()
 }
 
 # Run default setup at startup
@@ -127,8 +129,8 @@ def execute_setup(setup_code):
             'np': np,
             'img': img_full.copy(),
             'dark': dark_full.copy(),
-            'topdark': topdark_full.copy(),
-            'topbias': topbias_full.copy()
+            # 'topdark': topdark_full.copy(),
+            # 'topbias': topbias_full.copy()
         }
         exec(setup_code, namespace)
     except Exception as e:

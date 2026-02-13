@@ -6,6 +6,8 @@ import torch as t
 from tqdm import tqdm
 import numpy as np
 
+from common import load
+
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -68,7 +70,7 @@ def learn_pwl(y, s):
     return mapping
 
 
-img = t.from_numpy(np.load(path:='images_20260111/oob_nfi_l0.npy'))
+img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl'))
 img_flat_pwl = img.clone()
 
 # row to begin clipping of echo
