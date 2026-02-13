@@ -8,12 +8,12 @@ from urllib.parse import urlencode, parse_qs
 import json
 
 from common import load
+from pathlib import Path
 
-# Load full images at module level
-img_full = load('images_20260111/oob_nfi_l0.pkl')
-# topdark_full = load('images/oob_nfi_l0_topdark.pkl').mean(axis=0, keepdims=True)
-# topbias_full = load('images/oob_nfi_l0_topbias.pkl').mean(axis=0, keepdims=True)
-dark_full = load('images_20260111/dark_nfi_l0.pkl')
+# Discover and load all images: images[(dir, stem)] -> ndarray
+image_dirs = sorted(str(d) for d in Path('.').glob('images_*'))
+image_types = sorted(set(p.stem for d in image_dirs for p in Path(d).glob('*.pkl')))
+images = {(d, p.stem): load(str(p)) for d in image_dirs for p in Path(d).glob('*.pkl')}
 
 default_setup = """\
 img = img[100:512]
@@ -41,16 +41,15 @@ y = np.clip(y, -100, 10)
 """
 
 
-# Global namespace shared between setup and transform
-namespace = {
-    'np': np,
-    'img': img_full.copy(),
-    'dark': dark_full.copy(),
-    # 'topdark': topdark_full.copy(),
-    # 'topbias': topbias_full.copy()
-}
+def make_namespace(img_dir, img_type):
+    return {
+        'np': np,
+        'img': images[(img_dir, img_type)].copy(),
+        'dark': images[(img_dir, 'dark_nfi_l0')].copy(),
+    }
 
-# Run default setup at startup
+# Global namespace shared between setup and transform
+namespace = make_namespace(image_dirs[0], 'oob_nfi_l0')
 exec(default_setup, namespace)
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], url_base_pathname='/surface/')
@@ -64,11 +63,17 @@ app.layout = dbc.Container([
             dbc.Tabs([
                 dbc.Tab(label='Setup', children=[
                     html.Br(),
+                    html.Label('Image:'),
+                    dbc.Row([
+                        dbc.Col(dcc.Dropdown(id='img-type', options=image_types, value='oob_nfi_l0', clearable=False), width=6),
+                        dbc.Col(dcc.Dropdown(id='img-dir', options=image_dirs, value=image_dirs[0], clearable=False), width=6),
+                    ]),
+                    html.Br(),
                     html.Label('Setup:'),
                     dcc.Textarea(id='setup', value=default_setup, style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('Selected columns:'),
-                    dcc.RangeSlider(id='cols', min=0, max=img_full.shape[1] - 1, step=1, value=[100, 120],
+                    dcc.RangeSlider(id='cols', min=0, max=next(iter(images.values())).shape[1] - 1, step=1, value=[100, 120],
                                     marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
                     html.Br(),
                     html.Br(),
@@ -118,24 +123,19 @@ app.layout = dbc.Container([
 
 @app.callback(
     Output('setup-executed', 'data'),
-    Input('setup', 'value')
+    Input('setup', 'value'),
+    Input('img-type', 'value'),
+    Input('img-dir', 'value')
 )
-def execute_setup(setup_code):
+def execute_setup(setup_code, img_type, img_dir):
     """Run setup code and update global namespace."""
     global namespace
     try:
-        # Reset namespace with full images
-        namespace = {
-            'np': np,
-            'img': img_full.copy(),
-            'dark': dark_full.copy(),
-            # 'topdark': topdark_full.copy(),
-            # 'topbias': topbias_full.copy()
-        }
+        namespace = make_namespace(img_dir, img_type)
         exec(setup_code, namespace)
     except Exception as e:
         print(f'Setup error: {e}')
-    return hash(setup_code)
+    return hash((setup_code, img_type, img_dir))
 
 def compute_transform(a, b, transform_code):
     """Run transform code on existing namespace to compute x, y, s."""
