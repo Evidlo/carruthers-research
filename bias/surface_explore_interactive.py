@@ -203,7 +203,7 @@ def update_2d_plot(n_clicks, a, b, transform_code):
     ))
     fig_2d.update_layout(
         title='y (2D)',
-        yaxis=dict(scaleanchor='x', scaleratio=1),
+        yaxis=dict(scaleanchor='x', scaleratio=1, autorange='reversed'),
         margin=dict(l=0, r=0, t=40, b=0),
         uirevision='constant'
     )
