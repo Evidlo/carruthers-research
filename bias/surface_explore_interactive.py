@@ -140,19 +140,20 @@ def execute_setup(setup_code, img_type, img_dir):
 def compute_transform(a, b, transform_code):
     """Run transform code on existing namespace to compute x, y, s."""
     try:
-        namespace['a'] = a
-        namespace['b'] = b
-        exec(transform_code, namespace)
-        x = namespace.get('x', np.zeros((1, 1)))
-        y = namespace.get('y', np.zeros((1, 1)))
-        s = namespace.get('s', np.zeros((1, 1)))
+        ns = {**namespace, 'a': a, 'b': b}
+        exec(transform_code, ns)
+        x = ns.get('x', np.zeros((1, 1)))
+        y = ns.get('y', np.zeros((1, 1)))
+        s = ns.get('s', np.zeros((1, 1)))
+        y2 = ns.get('y2', None)
     except Exception as e:
         import traceback
         print(f'Transform error: {traceback.format_exc()}')
         x = np.zeros((1, 1))
         y = np.zeros((1, 1))
         s = np.sum(y, axis=1)
-    return x, y, s
+        y2 = None
+    return x, y, s, y2
 
 @app.callback(
     Output('plot-3d', 'figure'),
@@ -163,15 +164,28 @@ def compute_transform(a, b, transform_code):
     Input('setup-executed', 'data')
 )
 def update_3d_plot(a, b, transform_code, col_range, _):
-    x, y, s = compute_transform(a, b, transform_code)
+    x, y, s, y2 = compute_transform(a, b, transform_code)
     selected_cols = list(range(col_range[0], col_range[1] + 1))
+    s_min = float(np.min(s))
+
+    colors = go.Figure().layout.template.layout.colorway
 
     fig_3d = go.Figure()
-    for col in selected_cols:
+    for i, col in enumerate(selected_cols):
+        c = colors[i % len(colors)]
         fig_3d.add_trace(go.Scatter3d(
             x=x[:, col], y=s, z=y[:, col], mode='markers',
-            marker=dict(size=2), name=f'col {col}'
+            marker=dict(size=2, color=c), name=f'col {col}'
         ))
+
+    if y2 is not None:
+        for i, col in enumerate(selected_cols):
+            c = colors[i % len(colors)]
+            fig_3d.add_trace(go.Scatter3d(
+                x=[x[0, col]], y=[s_min], z=[float(y2[col])], mode='markers',
+                marker=dict(size=5, color=c, line=dict(width=2, color='black')),
+                showlegend=False
+            ))
 
     fig_3d.update_layout(
         scene=dict(
@@ -195,7 +209,7 @@ def update_3d_plot(a, b, transform_code, col_range, _):
     prevent_initial_call=True
 )
 def update_2d_plot(n_clicks, a, b, transform_code):
-    x, y, s = compute_transform(a, b, transform_code)
+    x, y, s, y2 = compute_transform(a, b, transform_code)
 
     fig_2d = go.Figure(data=go.Heatmap(
         z=y,
@@ -253,7 +267,7 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 )
 def load_from_url(search, initialized):
     if initialized or not search:
-        return [1, 0, default_transform, [100, 120], 0, 2, 500, -10, 10, 500, True]
+        return [1, 0, default_transform, [120, 130], 0, 2, 500, -10, 10, 500, True]
 
     params = parse_qs(search.lstrip('?'))
     return [
