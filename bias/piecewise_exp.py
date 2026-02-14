@@ -17,7 +17,7 @@ num_columns = 400
 img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl'))
 img = t.from_numpy(load(path:='images_20260101/dark_nfi_l0.pkl'))
 cols = slice(0, num_columns)
-rows = slice(100, 512)
+rows = slice(150, 512)
 y = img[rows, cols]
 s = img.sum(dim=1, keepdim=True)[rows]
 
@@ -118,18 +118,18 @@ plt.title(path)
 # plt.xlim([0, 1.75])
 plt.savefig('/www/out2.png')
 
+clip = lambda x: t.clip(x, x.min(), x.min() + 50)
 plt.close()
 plt.figure(figsize=(10, 4))
 plt.subplot(1, 2, 1)
 # plt.imshow(np.clip(img[rows, cols], None, img.min() + 2000))
-plt.imshow(img[rows, cols])
+plt.imshow(clip(img[rows, cols] - img[rows, cols].mean(axis=0)))
 plt.colorbar()
-
 plt.subplot(1, 2, 2)
 img_flat = img.clone()
 img_flat[rows, cols] -= denormalize(p(s).detach(), ymin, ymax)
 # plt.imshow(np.clip(img_flat[rows, cols], None, img_flat.min() + 2000))
-plt.imshow(img_flat[rows, cols])
+plt.imshow(clip(img_flat[rows, cols]))
 plt.colorbar()
 plt.savefig('/www/out3.png', dpi=200)
 
