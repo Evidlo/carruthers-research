@@ -7,7 +7,7 @@ import dash_bootstrap_components as dbc
 from urllib.parse import urlencode, parse_qs
 import json
 
-from common import load
+from common import load, rob_bias
 from pathlib import Path
 
 # Discover and load all images: images[(dir, stem)] -> ndarray
@@ -15,29 +15,21 @@ image_dirs = sorted(str(d) for d in Path('.').glob('images_*'))
 image_types = sorted(set(p.stem for d in image_dirs for p in Path(d).glob('*.pkl')))
 images = {(d, p.stem): load(str(p)) for d in image_dirs for p in Path(d).glob('*.pkl')}
 
-default_setup = """\
-img = img[100:512]
-dark = dark[100:512]
-# topdark = topdark
-# topbias = topbias
-
-# compute robust bias
-m = img[0:150]
-mask = np.logical_and(
-    m > np.percentile(m, 40, axis=0, keepdims=True),
-    m < np.percentile(m, 60, axis=0, keepdims=True)
+DEFAULTS = dict(
+    a=25.0, a_min=0, a_max=50, a_steps=500,
+    b=50, b_min=0, b_max=10, b_steps=500,
+    cols=[100, 120],
 )
 
-robbias = np.ma.array(m, mask=~mask).mean(axis=0, keepdims=True)
-robbias = robbias.repeat(412, axis=0)
+default_setup = """\
+robbias = rob_bias(img, 150, 150)
 """
 
 default_transform = """\
-x = robbias
+x = img[512:]
 y = img - robbias
 s = np.sum(img, axis=1)
-
-y = np.clip(y, -100, 10)
+y = np.clip(y, -100, y.min() + a)
 """
 
 
@@ -46,6 +38,7 @@ def make_namespace(img_dir, img_type):
         'np': np,
         'img': images[(img_dir, img_type)].copy(),
         'dark': images[(img_dir, 'dark_nfi_l0')].copy(),
+        'rob_bias': rob_bias,
     }
 
 # Global namespace shared between setup and transform
@@ -73,7 +66,7 @@ app.layout = dbc.Container([
                     dcc.Textarea(id='setup', value=default_setup, style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('Selected columns:'),
-                    dcc.RangeSlider(id='cols', min=0, max=next(iter(images.values())).shape[1] - 1, step=1, value=[100, 120],
+                    dcc.RangeSlider(id='cols', min=0, max=next(iter(images.values())).shape[1] - 1, step=1, value=[1, 1],
                                     marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
                     html.Br(),
                     html.Br(),
@@ -91,19 +84,19 @@ app.layout = dbc.Container([
                     dcc.Textarea(id='transform', value=default_transform, style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('a:'),
-                    dcc.Slider(id='slider-a', min=0, max=2, step=0.004, value=1.0, marks={i: str(i) for i in [0, 0.5, 1, 1.5, 2]}),
+                    dcc.Slider(id='slider-a', min=1, max=1, step=1, value=1),
                     dbc.Row([
-                        dbc.Col(dcc.Input(id='a-min', type='number', value=0, placeholder='Start', size='sm'), width=4),
-                        dbc.Col(dcc.Input(id='a-max', type='number', value=2, placeholder='Stop', size='sm'), width=4),
-                        dbc.Col(dcc.Input(id='a-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='a-min', type='number', value=1, placeholder='Start', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='a-max', type='number', value=1, placeholder='Stop', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='a-steps', type='number', value=1, placeholder='Steps', size='sm'), width=4),
                     ]),
                     html.Br(),
                     html.Label('b:'),
-                    dcc.Slider(id='slider-b', min=-10, max=10, step=0.04, value=0, marks={i: str(i) for i in range(-10, 11, 5)}),
+                    dcc.Slider(id='slider-b', min=1, max=1, step=1, value=1),
                     dbc.Row([
-                        dbc.Col(dcc.Input(id='b-min', type='number', value=-10, placeholder='Start', size='sm'), width=4),
-                        dbc.Col(dcc.Input(id='b-max', type='number', value=10, placeholder='Stop', size='sm'), width=4),
-                        dbc.Col(dcc.Input(id='b-steps', type='number', value=500, placeholder='Steps', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='b-min', type='number', value=1, placeholder='Start', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='b-max', type='number', value=1, placeholder='Stop', size='sm'), width=4),
+                        dbc.Col(dcc.Input(id='b-steps', type='number', value=1, placeholder='Steps', size='sm'), width=4),
                     ]),
                 ]),
             ]),
@@ -266,21 +259,24 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
     prevent_initial_call=False
 )
 def load_from_url(search, initialized):
+    D = DEFAULTS
     if initialized or not search:
-        return [1, 0, default_transform, [120, 130], 0, 2, 500, -10, 10, 500, True]
+        return [D['a'], D['b'], default_transform, D['cols'],
+                D['a_min'], D['a_max'], D['a_steps'],
+                D['b_min'], D['b_max'], D['b_steps'], True]
 
     params = parse_qs(search.lstrip('?'))
     return [
-        float(params.get('a', [1])[0]),
-        float(params.get('b', [0])[0]),
+        float(params.get('a', [D['a']])[0]),
+        float(params.get('b', [D['b']])[0]),
         params.get('transform', [default_transform])[0],
-        [int(params.get('col_start', [100])[0]), int(params.get('col_stop', [120])[0])],
-        float(params.get('a_min', [0])[0]),
-        float(params.get('a_max', [2])[0]),
-        int(params.get('a_steps', [500])[0]),
-        float(params.get('b_min', [-10])[0]),
-        float(params.get('b_max', [10])[0]),
-        int(params.get('b_steps', [500])[0]),
+        [int(params.get('col_start', [D['cols'][0]])[0]), int(params.get('col_stop', [D['cols'][1]])[0])],
+        float(params.get('a_min', [D['a_min']])[0]),
+        float(params.get('a_max', [D['a_max']])[0]),
+        int(params.get('a_steps', [D['a_steps']])[0]),
+        float(params.get('b_min', [D['b_min']])[0]),
+        float(params.get('b_max', [D['b_max']])[0]),
+        int(params.get('b_steps', [D['b_steps']])[0]),
         True
     ]
 
@@ -295,7 +291,7 @@ def load_from_url(search, initialized):
 )
 def update_slider_a(a_min, a_max, a_steps):
     if a_min is None or a_max is None or a_steps is None or a_steps <= 0:
-        return 0, 2, 0.004
+        return DEFAULTS['a_min'], DEFAULTS['a_max'], (DEFAULTS['a_max'] - DEFAULTS['a_min']) / DEFAULTS['a_steps']
     return a_min, a_max, (a_max - a_min) / a_steps
 
 @app.callback(
@@ -309,7 +305,7 @@ def update_slider_a(a_min, a_max, a_steps):
 )
 def update_slider_b(b_min, b_max, b_steps):
     if b_min is None or b_max is None or b_steps is None or b_steps <= 0:
-        return -10, 10, 0.04
+        return DEFAULTS['b_min'], DEFAULTS['b_max'], (DEFAULTS['b_max'] - DEFAULTS['b_min']) / DEFAULTS['b_steps']
     return b_min, b_max, (b_max - b_min) / b_steps
 
 if __name__ == '__main__':
