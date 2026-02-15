@@ -16,8 +16,8 @@ image_types = sorted(set(p.stem for d in image_dirs for p in Path(d).glob('*.pkl
 images = {(d, p.stem): load(str(p)) for d in image_dirs for p in Path(d).glob('*.pkl')}
 
 DEFAULTS = dict(
-    a=25.0, a_min=0, a_max=50, a_steps=500,
-    b=50, b_min=0, b_max=10, b_steps=500,
+    a=95, a_min=0, a_max=100, a_steps=500,
+    b=100, b_min=0, b_max=100, b_steps=500,
     cols=[100, 120],
 )
 
@@ -27,9 +27,12 @@ robbias = rob_bias(img, 150, 150)
 
 default_transform = """\
 x = img[512:]
-y = img - robbias
-s = np.sum(img, axis=1)
-y = np.clip(y, -100, y.min() + a)
+y = (img - robbias)[512:-100]
+s = np.sum(img, axis=1)[512:-100]
+
+# limits (set with a & b sliders)
+y = np.clip(y, -100, np.percentile(y, a))
+s = np.clip(s, s.min(), np.percentile(s, b))
 """
 
 
