@@ -35,7 +35,7 @@ def learn_pwl(y, s):
     """
 
     # normalize data before learning PWL function
-    s, _, _ = normalize(s)
+    s, smin, smax = normalize(s)
     y, ymin, ymax = normalize(y)
 
     # p = FixedPWL(breakpoints=[.005, .015], num_channels=y.shape[1])
@@ -59,15 +59,15 @@ def learn_pwl(y, s):
         p.slopes.data[:, 0] = 0
 
 
-    def mapping(s):
-        # undo normalize on learned PWL function
-        return denormalize(
-            # PWL function was trained on normalized input
-            p(normalize(s)[0]),
-            ymin, ymax
-        )
+    # fold normalization into PWL parameters so p operates on raw inputs
+    s_scale = smax - smin
+    y_scale = ymax - ymin
+    with t.no_grad():
+        p.x_positions = denormalize(p.x_positions, smin, smax)
+        p.slopes.data = p.slopes.data * y_scale.unsqueeze(1) / s_scale
+        p.biases.data = denormalize(p.biases.data, ymin, ymax)
 
-    return mapping
+    return p
 
 
 img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl'))
@@ -90,12 +90,28 @@ s = img.sum(dim=1, keepdim=True)[rows]
 mapping = learn_pwl(y, s)
 img_flat_pwl[rows, cols] -= mapping(s)
 
+# %% plot2
+
+from common import plot_profile
+plot_profile(s, y, mapping(s))
+plt.savefig('/www/profile.png')
+
+# %% foo
+
+# upper row stat
+us = s
+umapping = mapping
+
 cols = slice(0, 400)
 rows = slice(512, -echo)
 y = img[rows, cols]
 s = img.sum(dim=1, keepdim=True)[rows]
 mapping = learn_pwl(y, s)
 img_flat_pwl[rows, cols] -= mapping(s)
+
+# lower row stat
+bs = s
+bmapping = mapping
 
 cols = slice(775, None)
 rows = slice(echo, 512)
@@ -111,8 +127,10 @@ s = img.sum(dim=1, keepdim=True)[rows]
 mapping = learn_pwl(y, s)
 img_flat_pwl[rows, cols] -= mapping(s)
 
-# --- plotting ---
+# ----- plotting -----
 # %% plot
+
+# image plots
 
 # clip to bottom dynamic range
 clipb = lambda x: t.clip(x, x.min(), x.min() + 50)
@@ -123,11 +141,17 @@ plt.subplot(1, 2, 1)
 plt.imshow(clipb(img_flat_orig).detach())
 plt.colorbar()
 plt.title("Standard Bias Subtraction: y - b")
-plt.clim(-5, 5)
+plt.clim(-10, 10)
 
 plt.subplot(1, 2, 2)
 plt.imshow(clipb(img_flat_pwl).detach())
-plt.clim(-5, 5)
+plt.clim(-10, 10)
 plt.colorbar()
 plt.title("PWL Bias Subtraction: y - f₂(b, s)")
 plt.savefig('/www/out3.png', dpi=400)
+
+# slope relationship plot
+import iplot as iplt
+iplt.close()
+iplt.scatter(bmapping.y_positions[:, 0], umapping.slopes[:, -1])
+iplt.savefig('/www/slopes.html')
