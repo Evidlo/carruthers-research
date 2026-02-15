@@ -169,9 +169,11 @@ def update_3d_plot(a, b, transform_code, col_range, _):
     fig_3d = go.Figure()
     for i, col in enumerate(selected_cols):
         c = colors[i % len(colors)]
+        rows = np.arange(x.shape[0])
         fig_3d.add_trace(go.Scatter3d(
             x=x[:, col], y=s, z=y[:, col], mode='markers',
-            marker=dict(size=2, color=c), name=f'col {col}'
+            marker=dict(size=2, color=c), name=f'col {col}',
+            customdata=rows, hovertemplate='x: %{x}<br>s: %{y}<br>y: %{z}<extra>%{fullData.name}<br>row %{customdata}</extra>'
         ))
 
     if y2 is not None:
