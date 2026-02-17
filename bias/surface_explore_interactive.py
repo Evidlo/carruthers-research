@@ -7,7 +7,7 @@ import dash_bootstrap_components as dbc
 from urllib.parse import urlencode, parse_qs
 import json
 
-from common import load, rob_bias
+from common import load, rob_bias, mean_bias
 from pathlib import Path
 
 # Discover and load all images: images[(dir, stem)] -> ndarray
@@ -21,14 +21,20 @@ DEFAULTS = dict(
     cols=[100, 120],
 )
 
-default_setup = """\
-robbias = rob_bias(img, 150, 150)
-"""
+default_setups = {
+    'Mean Bias': """\
+bias = mean_bias(img, 150, 150)
+""",
+    'Robust Bias': """\
+bias = rob_bias(img, 150, 150)
+""",
+}
 
-default_transform = """\
+default_transforms = {
+    'y/x/s': """\
 #x = img[512:]
-x = robbias[512:]
-y = (img - robbias)[512:]
+x = bias[512:]
+y = (img - bias)[512:]
 s = np.sum(img, axis=1)[512:]
 
 
@@ -40,7 +46,21 @@ s = np.clip(s, s.min(), np.percentile(s, b))
 #x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
 #x = np.clip(x, -100, np.percentile(x, a))
 #y = np.clip(y, -100, np.percentile(y, 95))
-"""
+""",
+'y/s/s\'': """\
+x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
+y = (img - bias)[512:]
+s = np.sum(img, axis=1)[512:]
+
+# row statistic of opposite side
+
+# limits (set with a & b sliders)
+x = np.clip(x, -100, np.percentile(x, a))
+y = np.clip(y, -100, np.percentile(y, 95))
+s = np.clip(s, s.min(), np.percentile(s, b))
+
+""",
+}
 
 
 def make_namespace(img_dir, img_type):
@@ -49,11 +69,12 @@ def make_namespace(img_dir, img_type):
         'img': images[(img_dir, img_type)].copy(),
         'dark': images[(img_dir, 'dark_nfi_l0')].copy(),
         'rob_bias': rob_bias,
+        'mean_bias': mean_bias,
     }
 
 # Global namespace shared between setup and transform
 namespace = make_namespace(image_dirs[0], 'oob_nfi_l0')
-exec(default_setup, namespace)
+exec(next(iter(default_setups.values())), namespace)
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], url_base_pathname='/surface/')
 
@@ -73,8 +94,10 @@ app.layout = dbc.Container([
                         dbc.Col(dcc.Dropdown(id='img-dir', options=image_dirs, value=image_dirs[0], clearable=False), width=6),
                     ]),
                     html.Br(),
-                    html.Label('Setup:'),
-                    dcc.Textarea(id='setup', value=default_setup, style={'width': '100%', 'height': 400}),
+                    html.Label('Bias:'),
+                    dcc.Dropdown(id='setup-preset', options=list(default_setups.keys()),
+                                 value=next(iter(default_setups.keys())), clearable=False, style={'marginBottom': '8px'}),
+                    dcc.Textarea(id='setup', value=next(iter(default_setups.values())), style={'width': '100%', 'height': 200}),
                     html.Br(),
                     html.Label('Selected columns:'),
                     dbc.Row([
@@ -95,8 +118,9 @@ app.layout = dbc.Container([
                 ]),
                 dbc.Tab(label='Transform', children=[
                     html.Br(),
-                    html.Label('Transform:'),
-                    dcc.Textarea(id='transform', value=default_transform, style={'width': '100%', 'height': 400}),
+                    dcc.Dropdown(id='transform-preset', options=list(default_transforms.keys()),
+                                 value=next(iter(default_transforms.keys())), clearable=False, style={'marginBottom': '8px'}),
+                    dcc.Textarea(id='transform', value=next(iter(default_transforms.values())), style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('a:'),
                     dcc.Slider(id='slider-a', min=1, max=1, step=1, value=1),
@@ -128,6 +152,22 @@ app.layout = dbc.Container([
         ], width=10)
     ])
 ], fluid=True)
+
+@app.callback(
+    Output('setup', 'value', allow_duplicate=True),
+    Input('setup-preset', 'value'),
+    prevent_initial_call=True
+)
+def load_setup_preset(key):
+    return default_setups[key]
+
+@app.callback(
+    Output('transform', 'value', allow_duplicate=True),
+    Input('transform-preset', 'value'),
+    prevent_initial_call=True
+)
+def load_transform_preset(key):
+    return default_transforms[key]
 
 @app.callback(
     Output('cols', 'data'),
@@ -289,7 +329,7 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 def load_from_url(search, initialized):
     D = DEFAULTS
     if initialized or not search:
-        return [D['a'], D['b'], default_transform, D['cols'][0], D['cols'][1],
+        return [D['a'], D['b'], next(iter(default_transforms.values())), D['cols'][0], D['cols'][1],
                 D['a_min'], D['a_max'], D['a_steps'],
                 D['b_min'], D['b_max'], D['b_steps'], True]
 
@@ -297,7 +337,7 @@ def load_from_url(search, initialized):
     return [
         float(params.get('a', [D['a']])[0]),
         float(params.get('b', [D['b']])[0]),
-        params.get('transform', [default_transform])[0],
+        params.get('transform', [next(iter(default_transforms.values()))])[0],
         int(params.get('col_start', [D['cols'][0]])[0]),
         int(params.get('col_stop', [D['cols'][1]])[0]),
         float(params.get('a_min', [D['a_min']])[0]),
