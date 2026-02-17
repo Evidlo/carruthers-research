@@ -314,4 +314,4 @@ def update_slider_b(b_min, b_max, b_steps):
     return b_min, b_max, (b_max - b_min) / b_steps
 
 if __name__ == '__main__':
-    app.run(debug=True, host='localhost', port=8009)
+    app.run(debug=True, host='localhost', port=8889)
