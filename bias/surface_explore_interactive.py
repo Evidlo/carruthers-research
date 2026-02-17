@@ -16,8 +16,8 @@ image_types = sorted(set(p.stem for d in image_dirs for p in Path(d).glob('*.pkl
 images = {(d, p.stem): load(str(p)) for d in image_dirs for p in Path(d).glob('*.pkl')}
 
 DEFAULTS = dict(
-    a=95, a_min=0, a_max=100, a_steps=500,
-    b=100, b_min=0, b_max=100, b_steps=500,
+    a=95, a_min=0, a_max=100, a_steps=100,
+    b=100, b_min=0, b_max=100, b_steps=100,
     cols=[100, 120],
 )
 
@@ -31,13 +31,15 @@ x = robbias[512:]
 y = (img - robbias)[512:]
 s = np.sum(img, axis=1)[512:]
 
-# row statistic of opposite side
-#x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
 
 # limits (set with a & b sliders)
-#x = np.clip(x, -100, np.percentile(x, a))
 y = np.clip(y, -100, np.percentile(y, a))
 s = np.clip(s, s.min(), np.percentile(s, b))
+
+# row statistic of opposite side
+#x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
+#x = np.clip(x, -100, np.percentile(x, a))
+#y = np.clip(y, -100, np.percentile(y, 95))
 """
 
 
@@ -59,6 +61,7 @@ app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='initialized', data=False),
     dcc.Store(id='setup-executed', data=0),
+    dcc.Store(id='cols'),
     dbc.Row([
         dbc.Col([
             dbc.Tabs([
@@ -74,8 +77,12 @@ app.layout = dbc.Container([
                     dcc.Textarea(id='setup', value=default_setup, style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('Selected columns:'),
-                    dcc.RangeSlider(id='cols', min=0, max=next(iter(images.values())).shape[1] - 1, step=1, value=[1, 1],
-                                    marks=None, tooltip={'placement': 'bottom', 'always_visible': True}),
+                    dbc.Row([
+                        dbc.Col(html.Small('From'), width=2),
+                        dbc.Col(dcc.Input(id='col-start', type='number', value=1, size='sm', style={'width': '100%'}), width=3),
+                        dbc.Col(html.Small('To'), width=2),
+                        dbc.Col(dcc.Input(id='col-stop', type='number', value=1, size='sm', style={'width': '100%'}), width=3),
+                    ], align='center'),
                     html.Br(),
                     html.Br(),
                     dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
@@ -108,19 +115,27 @@ app.layout = dbc.Container([
                     ]),
                 ]),
             ]),
-        ], width=4),
+        ], width=2),
         dbc.Col([
             dbc.Row([
                 dbc.Col([
-                    dcc.Graph(id='plot-3d', style={'height': '80vh'})
+                    dcc.Graph(id='plot-3d', style={'height': '80vh'}, clear_on_unhover=True)
                 ], width=7),
                 dbc.Col([
-                    dcc.Graph(id='plot-2d', figure=go.Figure(), style={'height': '80vh'})
+                    dcc.Graph(id='plot-2d', figure=go.Figure(layout=dict(dragmode='pan')), style={'height': '80vh'})
                 ], width=5)
             ])
-        ], width=8)
+        ], width=10)
     ])
 ], fluid=True)
+
+@app.callback(
+    Output('cols', 'data'),
+    Input('col-start', 'value'),
+    Input('col-stop', 'value'),
+)
+def update_cols(start, stop):
+    return [start or 0, stop or 0]
 
 @app.callback(
     Output('setup-executed', 'data'),
@@ -161,7 +176,7 @@ def compute_transform(a, b, transform_code):
     Input('slider-a', 'value'),
     Input('slider-b', 'value'),
     Input('transform', 'value'),
-    Input('cols', 'value'),
+    Input('cols', 'data'),
     Input('setup-executed', 'data')
 )
 def update_3d_plot(a, b, transform_code, col_range, _):
@@ -210,20 +225,21 @@ def update_3d_plot(a, b, transform_code, col_range, _):
     State('slider-a', 'value'),
     State('slider-b', 'value'),
     State('transform', 'value'),
+    State('cols', 'data'),
     prevent_initial_call=True
 )
-def update_2d_plot(n_clicks, a, b, transform_code):
+def update_2d_plot(n_clicks, a, b, transform_code, col_range):
     x, y, s, y2 = compute_transform(a, b, transform_code)
 
-    fig_2d = go.Figure(data=go.Heatmap(
-        z=y,
-        colorscale='Viridis'
-    ))
+    fig_2d = go.Figure(data=go.Heatmap(z=y, colorscale='Viridis',
+                                       hovertemplate='col: %{x}<br>row: %{y}<br>y: %{z}<extra></extra>'))
     fig_2d.update_layout(
         title='y (2D)',
         yaxis=dict(scaleanchor='x', scaleratio=1, autorange='reversed'),
         margin=dict(l=0, r=0, t=40, b=0),
-        uirevision='constant'
+        uirevision='constant',
+        dragmode='pan',
+        shapes=col_boundary_shapes(col_range)
     )
 
     return fig_2d
@@ -234,7 +250,7 @@ def update_2d_plot(n_clicks, a, b, transform_code):
     State('slider-a', 'value'),
     State('slider-b', 'value'),
     State('transform', 'value'),
-    State('cols', 'value'),
+    State('cols', 'data'),
     State('a-min', 'value'),
     State('a-max', 'value'),
     State('a-steps', 'value'),
@@ -257,7 +273,8 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
     Output('slider-a', 'value'),
     Output('slider-b', 'value'),
     Output('transform', 'value'),
-    Output('cols', 'value'),
+    Output('col-start', 'value'),
+    Output('col-stop', 'value'),
     Output('a-min', 'value'),
     Output('a-max', 'value'),
     Output('a-steps', 'value'),
@@ -272,7 +289,7 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 def load_from_url(search, initialized):
     D = DEFAULTS
     if initialized or not search:
-        return [D['a'], D['b'], default_transform, D['cols'],
+        return [D['a'], D['b'], default_transform, D['cols'][0], D['cols'][1],
                 D['a_min'], D['a_max'], D['a_steps'],
                 D['b_min'], D['b_max'], D['b_steps'], True]
 
@@ -281,7 +298,8 @@ def load_from_url(search, initialized):
         float(params.get('a', [D['a']])[0]),
         float(params.get('b', [D['b']])[0]),
         params.get('transform', [default_transform])[0],
-        [int(params.get('col_start', [D['cols'][0]])[0]), int(params.get('col_stop', [D['cols'][1]])[0])],
+        int(params.get('col_start', [D['cols'][0]])[0]),
+        int(params.get('col_stop', [D['cols'][1]])[0]),
         float(params.get('a_min', [D['a_min']])[0]),
         float(params.get('a_max', [D['a_max']])[0]),
         int(params.get('a_steps', [D['a_steps']])[0]),
@@ -319,19 +337,38 @@ def update_slider_b(b_min, b_max, b_steps):
         return DEFAULTS['b_min'], DEFAULTS['b_max'], (DEFAULTS['b_max'] - DEFAULTS['b_min']) / DEFAULTS['b_steps']
     return b_min, b_max, (b_max - b_min) / b_steps
 
+def col_boundary_shapes(col_range):
+    return [
+        dict(type='line', x0=col_range[0], x1=col_range[0], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=1)),
+        dict(type='line', x0=col_range[1], x1=col_range[1], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=1)),
+    ]
+
+@app.callback(
+    Output('plot-2d', 'figure', allow_duplicate=True),
+    Input('cols', 'data'),
+    prevent_initial_call=True
+)
+def update_col_boundaries(col_range):
+    patched = Patch()
+    patched['layout']['shapes'] = col_boundary_shapes(col_range)
+    return patched
+
 @app.callback(
     Output('plot-2d', 'figure', allow_duplicate=True),
     Input('plot-3d', 'hoverData'),
+    State('cols', 'data'),
     prevent_initial_call=True
 )
-def highlight_pixel(hover_data):
+def highlight_pixel(hover_data, col_range):
     if not hover_data:
-        return no_update
+        patched = Patch()
+        patched['layout']['shapes'] = col_boundary_shapes(col_range)
+        return patched
     row, col = hover_data['points'][0]['customdata']
     patched = Patch()
-    patched['layout']['shapes'] = [
-        dict(type='line', x0=col, x1=col, y0=-0.5, y1=10000, line=dict(color='red', width=1)),
-        dict(type='line', x0=-0.5, x1=10000, y0=row, y1=row, line=dict(color='red', width=1)),
+    patched['layout']['shapes'] = col_boundary_shapes(col_range) + [
+        dict(type='line', x0=col, x1=col, y0=0, y1=1, yref='paper', line=dict(color='red', width=1)),
+        dict(type='line', x0=0, x1=1, xref='paper', y0=row, y1=row, line=dict(color='red', width=1)),
     ]
     return patched
 
