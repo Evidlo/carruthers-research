@@ -2,7 +2,7 @@
 
 import numpy as np
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State, ctx
+from dash import Dash, dcc, html, Input, Output, State, ctx, Patch, no_update
 import dash_bootstrap_components as dbc
 from urllib.parse import urlencode, parse_qs
 import json
@@ -115,7 +115,7 @@ app.layout = dbc.Container([
                     dcc.Graph(id='plot-3d', style={'height': '80vh'})
                 ], width=7),
                 dbc.Col([
-                    dcc.Graph(id='plot-2d', style={'height': '80vh'})
+                    dcc.Graph(id='plot-2d', figure=go.Figure(), style={'height': '80vh'})
                 ], width=5)
             ])
         ], width=8)
@@ -175,10 +175,11 @@ def update_3d_plot(a, b, transform_code, col_range, _):
     for i, col in enumerate(selected_cols):
         c = colors[i % len(colors)]
         rows = np.arange(x.shape[0])
+        customdata = np.column_stack([rows, np.full(len(rows), col)])
         fig_3d.add_trace(go.Scatter3d(
             x=x[:, col], y=s, z=y[:, col], mode='markers',
             marker=dict(size=2, color=c), name=f'col {col}',
-            customdata=rows, hovertemplate='x: %{x}<br>s: %{y}<br>y: %{z}<extra>%{fullData.name}<br>row %{customdata}</extra>'
+            customdata=customdata, hovertemplate='x: %{x}<br>s: %{y}<br>y: %{z}<extra>%{fullData.name}<br>row %{customdata[0]}</extra>'
         ))
 
     if y2 is not None:
@@ -317,6 +318,22 @@ def update_slider_b(b_min, b_max, b_steps):
     if b_min is None or b_max is None or b_steps is None or b_steps <= 0:
         return DEFAULTS['b_min'], DEFAULTS['b_max'], (DEFAULTS['b_max'] - DEFAULTS['b_min']) / DEFAULTS['b_steps']
     return b_min, b_max, (b_max - b_min) / b_steps
+
+@app.callback(
+    Output('plot-2d', 'figure', allow_duplicate=True),
+    Input('plot-3d', 'hoverData'),
+    prevent_initial_call=True
+)
+def highlight_pixel(hover_data):
+    if not hover_data:
+        return no_update
+    row, col = hover_data['points'][0]['customdata']
+    patched = Patch()
+    patched['layout']['shapes'] = [
+        dict(type='line', x0=col, x1=col, y0=-0.5, y1=10000, line=dict(color='red', width=1)),
+        dict(type='line', x0=-0.5, x1=10000, y0=row, y1=row, line=dict(color='red', width=1)),
+    ]
+    return patched
 
 if __name__ == '__main__':
     app.run(debug=True, host='localhost', port=8889)
