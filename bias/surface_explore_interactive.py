@@ -26,11 +26,16 @@ robbias = rob_bias(img, 150, 150)
 """
 
 default_transform = """\
-x = img[512:]
-y = (img - robbias)[512:-100]
-s = np.sum(img, axis=1)[512:-100]
+#x = img[512:]
+x = robbias[512:]
+y = (img - robbias)[512:]
+s = np.sum(img, axis=1)[512:]
+
+# row statistic of opposite side
+#x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
 
 # limits (set with a & b sliders)
+#x = np.clip(x, -100, np.percentile(x, a))
 y = np.clip(y, -100, np.percentile(y, a))
 s = np.clip(s, s.min(), np.percentile(s, b))
 """
