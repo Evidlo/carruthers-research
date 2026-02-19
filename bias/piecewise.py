@@ -29,6 +29,10 @@ class FixedPWL(nn.Module):
         self.slopes = nn.Parameter(torch.randn(nc, nb + 1) * 0.1)
         self.biases = nn.Parameter(torch.zeros(nc))
 
+    @property
+    def y_positions(self):
+        return _y_positions(self.x_positions, self.slopes, self.biases)
+
     def forward(self, x):
         return _pwl_forward(x, self.x_positions, self.slopes, self.biases)
 
@@ -51,8 +55,26 @@ class PWL(nn.Module):
         self.slopes = nn.Parameter(torch.randn(num_channels, num_breakpoints + 1) * 0.1)
         self.biases = nn.Parameter(torch.zeros(num_channels))
 
+    @property
+    def y_positions(self):
+        return _y_positions(self.x_positions, self.slopes, self.biases)
+
     def forward(self, x):
         return _pwl_forward(x, self.x_positions, self.slopes, self.biases)
+
+
+def _y_positions(x_positions, slopes, biases):
+    """Compute y-values at each breakpoint.
+
+    Returns:
+        Tensor of shape (num_channels, num_breakpoints).
+    """
+    x_pos = x_positions.sort(dim=1).values
+    seg_lens = x_pos[:, 1:] - x_pos[:, :-1]
+    # cumulative y-contribution from interior slopes (slopes[:, 1:-1])
+    cumulative = torch.cumsum(slopes[:, 1:-1] * seg_lens, dim=1)
+    # y at b_0 = bias, y at b_i = bias + cumulative[i-1]
+    return torch.cat([biases.unsqueeze(1), biases.unsqueeze(1) + cumulative], dim=1)
 
 
 def _pwl_forward(x, x_positions, slopes, biases):
