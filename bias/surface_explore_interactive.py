@@ -22,11 +22,11 @@ DEFAULTS = dict(
 )
 
 default_setups = {
-    'Mean Bias': """\
-bias = mean_bias(img, 150, 150)
-""",
     'Robust Bias': """\
 bias = rob_bias(img, 150, 150)
+""",
+    'Mean Bias': """\
+bias = mean_bias(img, 150, 150)
 """,
 }
 
@@ -379,8 +379,8 @@ def update_slider_b(b_min, b_max, b_steps):
 
 def col_boundary_shapes(col_range):
     return [
-        dict(type='line', x0=col_range[0], x1=col_range[0], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=1)),
-        dict(type='line', x0=col_range[1], x1=col_range[1], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=1)),
+        dict(type='line', x0=col_range[0], x1=col_range[0], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=2)),
+        dict(type='line', x0=col_range[1], x1=col_range[1], y0=0, y1=1, yref='paper', layer='below', line=dict(color='blue', width=2)),
     ]
 
 @app.callback(
