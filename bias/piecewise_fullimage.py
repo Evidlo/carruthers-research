@@ -15,14 +15,6 @@ matplotlib.use('Agg')
 
 device = 'cuda'
 
-def normalize(x):
-    xmin, xmax = x.amin(dim=0), x.amax(dim=0)
-    x = x - xmin
-    return x / (xmax - xmin), xmin, xmax
-
-def denormalize(x, xmin, xmax):
-    return x * (xmax - xmin) + xmin
-
 def trimmed_norm(x, keep_ratio=0.9):
     keep_n = int(len(x) * keep_ratio)
     loss, _ = t.topk(x, keep_n, largest=False, dim=0)
@@ -33,26 +25,35 @@ def learn_pwl(y, s, iterations=2000):
 
     Args:
         y (tensor): flat patch of image values.  (shape (rows, cols))
-        s (tensor): row statistics (shape (rows))
+        s (tensor): row statistics (shape (rows, 1))
         iterations (int): number of iterations
 
     Returns:
-        PWL: piecewise linear function
+        FixedPWL: piecewise linear function in raw units
     """
+    smin, smax = s.amin(), s.amax()
+    s_scale = (smax - smin).item()
 
-    # normalize data before learning PWL function
-    s, smin, smax = normalize(s)
-    y, ymin, ymax = normalize(y)
+    # Breakpoints in raw s units, equivalent to [.004, .007, .015] in normalized space
+    bp_raw = t.tensor([.004, .007, .015], dtype=s.dtype, device=device) * s_scale + smin
 
-    # p = FixedPWL(breakpoints=[.005, .015], num_channels=y.shape[1])
     p = FixedPWL(
-        breakpoints=[.004, .007, .015],
-        # breakpoints=[.004, .007, .015, .44],
+        breakpoints=bp_raw,
+        # breakpoints=[.004, .007, .015, .44] * s_scale + smin,
         num_channels=y.shape[1],
     )
     p.to(device)
 
-    optim = t.optim.Adam(p.parameters(), lr=1e-1)
+    with t.no_grad():
+        p.biases.data = y.mean(dim=0)
+
+    # Slopes need lr scaled by 1/s_scale: target slope is O(std_y/s_scale),
+    # so Adam's step (O(lr)) matches when lr_slopes = base_lr / s_scale.
+    base_lr = 1.0
+    optim = t.optim.Adam([
+        {'params': [p.biases],  'lr': base_lr},
+        {'params': [p._slopes], 'lr': base_lr / s_scale},
+    ])
 
     loss_hist = []
     for _ in (bar:=tqdm(range(iterations))):
@@ -68,13 +69,7 @@ def learn_pwl(y, s, iterations=2000):
 
         p.slopes.data[:, 0] = 0
 
-    # denormalize PWL parameters
-    s_scale = smax - smin
-    y_scale = ymax - ymin
-    with t.no_grad():
-        p.breakpoints[0].copy_(denormalize(p.breakpoints[0], smin, smax))
-        p.slopes.data = p.slopes.data * y_scale.unsqueeze(1) / s_scale
-        p.biases.data = denormalize(p.biases.data, ymin, ymax)
+    print(f'  loss: {loss_hist[0]:.3e} → {loss_hist[-1]:.3e}')
 
     return p
 
