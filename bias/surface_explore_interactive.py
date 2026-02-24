@@ -23,41 +23,55 @@ DEFAULTS = dict(
 
 default_setups = {
     'Robust Bias': """\
-bias = rob_bias(img, 150, 150)
+bias = rob_bias(orig, 150, 150)
 """,
     'Mean Bias': """\
-bias = mean_bias(img, 150, 150)
+bias = mean_bias(orig, 150, 150)
 """,
 }
 
-default_transforms = {
+default_scripts = {
     'y/x/s': """\
-#x = img[512:]
+img = orig - bias
+#x = orig[512:]
 x = bias[512:]
-y = (img - bias)[512:]
-s = np.sum(img, axis=1)[512:]
+y = (img)[512:]
+s = np.sum(orig, axis=1)[512:]
 
 
 # limits (set with a & b sliders)
 y = np.clip(y, -100, np.percentile(y, a))
+img = np.clip(img, -100, np.percentile(img, a))
 s = np.clip(s, s.min(), np.percentile(s, b))
 
 # row statistic of opposite side
-#x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
+#x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
 #x = np.clip(x, -100, np.percentile(x, a))
 #y = np.clip(y, -100, np.percentile(y, 95))
+
+# labels
+labelx = 'x'
+labely = 's'
+labelz = 'y'
 """,
 'y/s/s\'': """\
-x = np.sum(img, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
-y = (img - bias)[512:]
-s = np.sum(img, axis=1)[512:]
+img = orig - bias
+x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
+y = (img)[512:]
+s = np.sum(orig, axis=1)[512:]
 
 # row statistic of opposite side
 
 # limits (set with a & b sliders)
 x = np.clip(x, -100, np.percentile(x, a))
 y = np.clip(y, -100, np.percentile(y, 95))
+img = np.clip(img, -100, np.percentile(img, 95))
 s = np.clip(s, s.min(), np.percentile(s, b))
+
+# labels
+labelx = 's´'
+labely = 's'
+labelz = 'y'
 
 """,
 }
@@ -66,13 +80,13 @@ s = np.clip(s, s.min(), np.percentile(s, b))
 def make_namespace(img_dir, img_type):
     return {
         'np': np,
-        'img': images[(img_dir, img_type)].copy(),
+        'orig': images[(img_dir, img_type)].copy(),
         'dark': images[(img_dir, 'dark_nfi_l0')].copy(),
         'rob_bias': rob_bias,
         'mean_bias': mean_bias,
     }
 
-# Global namespace shared between setup and transform
+# Global namespace shared between setup and plotting
 namespace = make_namespace(image_dirs[0], 'oob_nfi_l0')
 exec(next(iter(default_setups.values())), namespace)
 
@@ -100,12 +114,7 @@ app.layout = dbc.Container([
                     dcc.Textarea(id='setup', value=next(iter(default_setups.values())), style={'width': '100%', 'height': 200}),
                     html.Br(),
                     html.Label('Selected columns:'),
-                    dbc.Row([
-                        dbc.Col(html.Small('From'), width=2),
-                        dbc.Col(dcc.Input(id='col-start', type='number', value=1, size='sm', style={'width': '100%'}), width=3),
-                        dbc.Col(html.Small('To'), width=2),
-                        dbc.Col(dcc.Input(id='col-stop', type='number', value=1, size='sm', style={'width': '100%'}), width=3),
-                    ], align='center'),
+                    dcc.Input(id='cols-input', type='text', value='1:1', debounce=True, size='sm', style={'width': '100%'}),
                     html.Br(),
                     html.Br(),
                     dbc.Button('Update Image Plot', id='update-2d-btn', color='secondary', size='sm'),
@@ -116,11 +125,11 @@ app.layout = dbc.Container([
                     html.Br(),
                     dcc.Input(id='settings-url', type='text', readOnly=True, style={'width': '100%', 'fontSize': '11px'})
                 ]),
-                dbc.Tab(label='Transform', children=[
+                dbc.Tab(label='Plotting', children=[
                     html.Br(),
-                    dcc.Dropdown(id='transform-preset', options=list(default_transforms.keys()),
-                                 value=next(iter(default_transforms.keys())), clearable=False, style={'marginBottom': '8px'}),
-                    dcc.Textarea(id='transform', value=next(iter(default_transforms.values())), style={'width': '100%', 'height': 400}),
+                    dcc.Dropdown(id='plotting-preset', options=list(default_scripts.keys()),
+                                 value=next(iter(default_scripts.keys())), clearable=False, style={'marginBottom': '8px'}),
+                    dcc.Textarea(id='plotting', value=next(iter(default_scripts.values())), style={'width': '100%', 'height': 400}),
                     html.Br(),
                     html.Label('a:'),
                     dcc.Slider(id='slider-a', min=1, max=1, step=1, value=1),
@@ -162,20 +171,23 @@ def load_setup_preset(key):
     return default_setups[key]
 
 @app.callback(
-    Output('transform', 'value', allow_duplicate=True),
-    Input('transform-preset', 'value'),
+    Output('plotting', 'value', allow_duplicate=True),
+    Input('plotting-preset', 'value'),
     prevent_initial_call=True
 )
-def load_transform_preset(key):
-    return default_transforms[key]
+def load_plotting_preset(key):
+    return default_scripts[key]
 
 @app.callback(
     Output('cols', 'data'),
-    Input('col-start', 'value'),
-    Input('col-stop', 'value'),
+    Input('cols-input', 'value'),
 )
-def update_cols(start, stop):
-    return [start or 0, stop or 0]
+def update_cols(value):
+    try:
+        start, stop = value.split(':')
+        return [int(start), int(stop)]
+    except:
+        return [0, 0]
 
 @app.callback(
     Output('setup-executed', 'data'),
@@ -193,34 +205,39 @@ def execute_setup(setup_code, img_type, img_dir):
         print(f'Setup error: {e}')
     return hash((setup_code, img_type, img_dir))
 
-def compute_transform(a, b, transform_code):
-    """Run transform code on existing namespace to compute x, y, s."""
+def compute_plot(a, b, plot_code):
+    """Run plotting code on existing namespace to compute x, y, s."""
     try:
         ns = {**namespace, 'a': a, 'b': b}
-        exec(transform_code, ns)
+        exec(plot_code, ns)
         x = ns.get('x', np.zeros((1, 1)))
         y = ns.get('y', np.zeros((1, 1)))
         s = ns.get('s', np.zeros((1, 1)))
+        img = ns.get('img', np.zeros((1, 1)))
         y2 = ns.get('y2', None)
+        labelx = ns.get('labelx', 'x')
+        labely = ns.get('labely', 's')
+        labelz = ns.get('labelz', 'y')
     except Exception as e:
         import traceback
-        print(f'Transform error: {traceback.format_exc()}')
+        print(f'Plotting error: {traceback.format_exc()}')
         x = np.zeros((1, 1))
         y = np.zeros((1, 1))
         s = np.sum(y, axis=1)
         y2 = None
-    return x, y, s, y2
+        labelx, labely, labelz = 'x', 's', 'y'
+    return x, y, s, img, y2, labelx, labely, labelz
 
 @app.callback(
     Output('plot-3d', 'figure'),
     Input('slider-a', 'value'),
     Input('slider-b', 'value'),
-    Input('transform', 'value'),
+    Input('plotting', 'value'),
     Input('cols', 'data'),
     Input('setup-executed', 'data')
 )
-def update_3d_plot(a, b, transform_code, col_range, _):
-    x, y, s, y2 = compute_transform(a, b, transform_code)
+def update_3d_plot(a, b, plot_code, col_range, _):
+    x, y, s, img, y2, labelx, labely, labelz = compute_plot(a, b, plot_code)
     selected_cols = list(range(col_range[0], col_range[1] + 1))
     s_min = float(np.min(s))
 
@@ -248,9 +265,9 @@ def update_3d_plot(a, b, transform_code, col_range, _):
 
     fig_3d.update_layout(
         scene=dict(
-            xaxis_title='x',
-            yaxis_title='s',
-            zaxis_title='y'
+            xaxis_title=labelx,
+            yaxis_title=labely,
+            zaxis_title=labelz
         ),
         title='3D Scatter',
         margin=dict(l=0, r=0, t=40, b=0),
@@ -264,14 +281,14 @@ def update_3d_plot(a, b, transform_code, col_range, _):
     Input('update-2d-btn', 'n_clicks'),
     State('slider-a', 'value'),
     State('slider-b', 'value'),
-    State('transform', 'value'),
+    State('plotting', 'value'),
     State('cols', 'data'),
     prevent_initial_call=True
 )
-def update_2d_plot(n_clicks, a, b, transform_code, col_range):
-    x, y, s, y2 = compute_transform(a, b, transform_code)
+def update_2d_plot(n_clicks, a, b, plot_code, col_range):
+    x, y, s, img, y2, labelx, labely, labelz = compute_plot(a, b, plot_code)
 
-    fig_2d = go.Figure(data=go.Heatmap(z=y, colorscale='Viridis',
+    fig_2d = go.Figure(data=go.Heatmap(z=img, colorscale='Viridis',
                                        hovertemplate='col: %{x}<br>row: %{y}<br>y: %{z}<extra></extra>'))
     fig_2d.update_layout(
         title='y (2D)',
@@ -289,7 +306,7 @@ def update_2d_plot(n_clicks, a, b, transform_code, col_range):
     Input('copy-btn', 'n_clicks'),
     State('slider-a', 'value'),
     State('slider-b', 'value'),
-    State('transform', 'value'),
+    State('plotting', 'value'),
     State('cols', 'data'),
     State('a-min', 'value'),
     State('a-max', 'value'),
@@ -301,8 +318,8 @@ def update_2d_plot(n_clicks, a, b, transform_code, col_range):
 )
 def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min, b_max, b_steps):
     params = {
-        'a': a, 'b': b, 'transform': transform,
-        'col_start': cols[0], 'col_stop': cols[1],
+        'a': a, 'b': b, 'plotting': transform,
+        'cols': f'{cols[0]}:{cols[1]}',
         'a_min': a_min, 'a_max': a_max, 'a_steps': a_steps,
         'b_min': b_min, 'b_max': b_max, 'b_steps': b_steps
     }
@@ -312,9 +329,8 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 @app.callback(
     Output('slider-a', 'value'),
     Output('slider-b', 'value'),
-    Output('transform', 'value'),
-    Output('col-start', 'value'),
-    Output('col-stop', 'value'),
+    Output('plotting', 'value'),
+    Output('cols-input', 'value'),
     Output('a-min', 'value'),
     Output('a-max', 'value'),
     Output('a-steps', 'value'),
@@ -329,7 +345,7 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 def load_from_url(search, initialized):
     D = DEFAULTS
     if initialized or not search:
-        return [D['a'], D['b'], next(iter(default_transforms.values())), D['cols'][0], D['cols'][1],
+        return [D['a'], D['b'], next(iter(default_scripts.values())), f"{D['cols'][0]}:{D['cols'][1]}",
                 D['a_min'], D['a_max'], D['a_steps'],
                 D['b_min'], D['b_max'], D['b_steps'], True]
 
@@ -337,9 +353,8 @@ def load_from_url(search, initialized):
     return [
         float(params.get('a', [D['a']])[0]),
         float(params.get('b', [D['b']])[0]),
-        params.get('transform', [next(iter(default_transforms.values()))])[0],
-        int(params.get('col_start', [D['cols'][0]])[0]),
-        int(params.get('col_stop', [D['cols'][1]])[0]),
+        params.get('plotting', [next(iter(default_scripts.values()))])[0],
+        params.get('cols', [f"{D['cols'][0]}:{D['cols'][1]}"])[0],
         float(params.get('a_min', [D['a_min']])[0]),
         float(params.get('a_max', [D['a_max']])[0]),
         int(params.get('a_steps', [D['a_steps']])[0]),
