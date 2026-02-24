@@ -24,9 +24,11 @@ DEFAULTS = dict(
 default_setups = {
     'Robust Bias': """\
 bias = rob_bias(orig, 150, 150)
+res = np.load('residual.npy')
 """,
     'Mean Bias': """\
 bias = mean_bias(orig, 150, 150)
+res = np.load('residual.npy')
 """,
 }
 
@@ -35,6 +37,7 @@ default_scripts = {
 img = orig - bias
 #x = orig[512:]
 x = bias[512:]
+x = (bias - res)[512:]
 y = (img)[512:]
 s = np.sum(orig, axis=1)[512:]
 
@@ -198,34 +201,22 @@ def update_cols(value):
 def execute_setup(setup_code, img_type, img_dir):
     """Run setup code and update global namespace."""
     global namespace
-    try:
-        namespace = make_namespace(img_dir, img_type)
-        exec(setup_code, namespace)
-    except Exception as e:
-        print(f'Setup error: {e}')
+    namespace = make_namespace(img_dir, img_type)
+    exec(setup_code, namespace)
     return hash((setup_code, img_type, img_dir))
 
 def compute_plot(a, b, plot_code):
     """Run plotting code on existing namespace to compute x, y, s."""
-    try:
-        ns = {**namespace, 'a': a, 'b': b}
-        exec(plot_code, ns)
-        x = ns.get('x', np.zeros((1, 1)))
-        y = ns.get('y', np.zeros((1, 1)))
-        s = ns.get('s', np.zeros((1, 1)))
-        img = ns.get('img', np.zeros((1, 1)))
-        y2 = ns.get('y2', None)
-        labelx = ns.get('labelx', 'x')
-        labely = ns.get('labely', 's')
-        labelz = ns.get('labelz', 'y')
-    except Exception as e:
-        import traceback
-        print(f'Plotting error: {traceback.format_exc()}')
-        x = np.zeros((1, 1))
-        y = np.zeros((1, 1))
-        s = np.sum(y, axis=1)
-        y2 = None
-        labelx, labely, labelz = 'x', 's', 'y'
+    ns = {**namespace, 'a': a, 'b': b}
+    exec(plot_code, ns)
+    x = ns.get('x', np.zeros((1, 1)))
+    y = ns.get('y', np.zeros((1, 1)))
+    s = ns.get('s', np.zeros((1, 1)))
+    img = ns.get('img', np.zeros((1, 1)))
+    y2 = ns.get('y2', None)
+    labelx = ns.get('labelx', 'x')
+    labely = ns.get('labely', 's')
+    labelz = ns.get('labelz', 'y')
     return x, y, s, img, y2, labelx, labely, labelz
 
 @app.callback(
