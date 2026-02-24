@@ -35,11 +35,11 @@ res = np.load('residual.npy')
 default_scripts = {
     'y/x/s': """\
 img = orig - bias
-#x = orig[512:]
-x = bias[512:]
-x = (bias - res)[512:]
-y = (img)[512:]
-s = np.sum(orig, axis=1)[512:]
+#x = orig[rows]
+x = bias[rows]
+x = (bias - res)[rows]
+y = (img)[rows]
+s = np.sum(orig, axis=1)[rows]
 
 
 # limits (set with a & b sliders)
@@ -48,7 +48,7 @@ img = np.clip(img, -100, np.percentile(img, a))
 s = np.clip(s, s.min(), np.percentile(s, b))
 
 # row statistic of opposite side
-#x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
+#x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[rows]
 #x = np.clip(x, -100, np.percentile(x, a))
 #y = np.clip(y, -100, np.percentile(y, 95))
 
@@ -59,11 +59,11 @@ labelz = 'y'
 """,
 'y/s/s\'': """\
 img = orig - bias
-x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[:512]
-y = (img)[512:]
-s = np.sum(orig, axis=1)[512:]
-
+x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[rows]
+y = (img)[rows_opp]
 # row statistic of opposite side
+s = np.sum(orig, axis=1)[rows_opp]
+
 
 # limits (set with a & b sliders)
 x = np.clip(x, -100, np.percentile(x, a))
@@ -87,6 +87,8 @@ def make_namespace(img_dir, img_type):
         'dark': images[(img_dir, 'dark_nfi_l0')].copy(),
         'rob_bias': rob_bias,
         'mean_bias': mean_bias,
+        'rows': slice(512, None),
+        'rows_opp': slice(0, 512),
     }
 
 # Global namespace shared between setup and plotting
@@ -100,6 +102,7 @@ app.layout = dbc.Container([
     dcc.Store(id='initialized', data=False),
     dcc.Store(id='setup-executed', data=0),
     dcc.Store(id='cols'),
+    dcc.Store(id='rows'),
     dbc.Row([
         dbc.Col([
             dbc.Tabs([
@@ -116,6 +119,8 @@ app.layout = dbc.Container([
                                  value=next(iter(default_setups.keys())), clearable=False, style={'marginBottom': '8px'}),
                     dcc.Textarea(id='setup', value=next(iter(default_setups.values())), style={'width': '100%', 'height': 200}),
                     html.Br(),
+                    html.Label('Selected rows:'),
+                    dcc.Input(id='rows-input', type='text', value='512:', debounce=True, size='sm', style={'width': '100%'}),
                     html.Label('Selected columns:'),
                     dcc.Input(id='cols-input', type='text', value='1:1', debounce=True, size='sm', style={'width': '100%'}),
                     html.Br(),
@@ -182,6 +187,24 @@ def load_plotting_preset(key):
     return default_scripts[key]
 
 @app.callback(
+    Output('rows', 'data'),
+    Input('rows-input', 'value'),
+)
+def update_rows(value):
+    try:
+        start, stop = value.split(':')
+        start = int(start) if start.strip() else 0
+        stop = int(stop) if stop.strip() else None
+    except:
+        start, stop = 0, 512
+    SPLIT = 512
+    opp_start = (start + SPLIT) % 1024
+    opp_stop = ((stop or 1024) + SPLIT) % 1024 or None
+    namespace['rows'] = slice(start, stop)
+    namespace['rows_opp'] = slice(opp_start, opp_stop)
+    return [start, stop]
+
+@app.callback(
     Output('cols', 'data'),
     Input('cols-input', 'value'),
 )
@@ -225,9 +248,10 @@ def compute_plot(a, b, plot_code):
     Input('slider-b', 'value'),
     Input('plotting', 'value'),
     Input('cols', 'data'),
+    Input('rows', 'data'),
     Input('setup-executed', 'data')
 )
-def update_3d_plot(a, b, plot_code, col_range, _):
+def update_3d_plot(a, b, plot_code, col_range, _rows, _):
     x, y, s, img, y2, labelx, labely, labelz = compute_plot(a, b, plot_code)
     selected_cols = list(range(col_range[0], col_range[1] + 1))
     s_min = float(np.min(s))
@@ -238,7 +262,10 @@ def update_3d_plot(a, b, plot_code, col_range, _):
     for i, col in enumerate(selected_cols):
         c = colors[i % len(colors)]
         rows = np.arange(x.shape[0])
-        customdata = np.column_stack([rows, np.full(len(rows), col)])
+        customdata = np.column_stack([
+            rows + namespace['rows'].start,
+            np.full(len(rows), col)
+        ])
         fig_3d.add_trace(go.Scatter3d(
             x=x[:, col], y=s, z=y[:, col], mode='markers',
             marker=dict(size=2, color=c), name=f'col {col}',
