@@ -33,15 +33,16 @@ def shelfmask(s, s_opp):
 def surface(s, s_opp, bias, slope, offset, mask):
     """Linear correction above threshold, 0 below.
 
-    slope, offset: (C,) per-column parameters
-    s:             (N, 1) row statistic
-    Returns:       (N, C)
+    slope:  (2, C) per-column slopes for s and s_opp
+    offset: (C,)   per-column intercept
+    bias:   (C,)   value below threshold
+    s:      (N, 1) row statistic
+    Returns: (N, C)
     """
-    linear = offset.unsqueeze(0) + slope.unsqueeze(0) * s  # (N, C)
-    # return t.where(mask, linear, t.zeros_like(linear))
+    linear = offset.unsqueeze(0) + slope[0].unsqueeze(0) * s + slope[1].unsqueeze(0) * s_opp  # (N, C)
     return t.where(mask, linear, t.ones_like(linear) * bias)
 
-def learn_linear(y, s, s_opp, iterations=3000):
+def learn_linear(y, s, s_opp, iterations=30000):
     """Fit a thresholded linear surface to y as a function of s and s_opp.
 
     Args:
@@ -55,18 +56,19 @@ def learn_linear(y, s, s_opp, iterations=3000):
     """
     C = y.shape[1]
 
-    slope  = t.zeros(C, **d).requires_grad_(True)
+    slope  = t.zeros(2, C, **d).requires_grad_(True)
     offset = y.mean(dim=0).detach().clone().requires_grad_(True)
-    bias = y.mean(dim=0).detach().clone().requires_grad_(True)
-    mask = shelfmask(s, s_opp)
+    bias   = y.mean(dim=0).detach().clone().requires_grad_(True)
+    mask   = shelfmask(s, s_opp)
 
     # Slopes need lr scaled by 1/s_scale: target slope is O(std_y/s_scale),
     # so Adam's step (O(lr)) matches when lr_slopes = base_lr / s_scale.
-    base_lr = 1.0
+    base_lr = 0.1
     optim = t.optim.Adam([
         {'params': [offset], 'lr': base_lr},
-        {'params': [bias], 'lr': base_lr},
-        {'params': [slope],  'lr': base_lr / (s.amax() - s.amin()).item()},
+        {'params': [bias],   'lr': base_lr},
+        {'params': [slope],  'lr': base_lr / max((s.amax() - s.amin()).item(),
+                                                  (s_opp.amax() - s_opp.amin()).item())},
     ])
 
     loss_hist = []
@@ -91,7 +93,7 @@ def learn_linear(y, s, s_opp, iterations=3000):
     return mapping
 
 
-img = t.from_numpy(load(path:='images_20260117/oob_nfi_l0.pkl')).to(**d)
+# img = t.from_numpy(load(path:='images_20260117/oob_nfi_l0.pkl')).to(**d)
 img = t.from_numpy(load(path:='images_20251117/oob_nfi_l0.pkl')).to(**d)
 img_flat_pwl = img.clone()
 
@@ -107,14 +109,17 @@ img_flat_orig -= mean_bias(img_flat_orig, echo_bias, echo_bias)
 # img_flat_orig[-512:-echo, 775:] -= img_flat_orig[-250:-echo, 775:].mean(dim=0, keepdim=True)
 
 # --- training ---
-# %% plot2
-cols = slice(0, 400)
-rows = slice(echo, 512)
-y = img[rows, cols]
-s     = img.sum(dim=1, keepdim=True)[echo:512]
-s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
-mapping = learn_linear(y, s, s_opp)
-img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+# cols = slice(0, 400)
+# rows = slice(echo, 512)
+# y = img[rows, cols]
+# s     = img.sum(dim=1, keepdim=True)[echo:512]
+# s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
+# mapping = learn_linear(y, s, s_opp)
+# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+
+# from plotting import plot_profile_linear, detach
+# plot_profile_linear(s, s_opp, y, mapping, col=200)
+# iplt.savefig('/www/profile_linear1.html')
 
 cols = slice(0, 400)
 rows = slice(512, -echo)
@@ -126,23 +131,24 @@ img_flat_pwl[rows, cols] -= mapping(s, s_opp)
 
 from plotting import plot_profile_linear, detach
 plot_profile_linear(s, s_opp, y, mapping, col=200)
-iplt.savefig('/www/profile_linear.html')
+iplt.savefig('/www/profile_linear2.html')
 
-cols = slice(775, None)
-rows = slice(echo, 512)
-y = img[rows, cols]
-s     = img.sum(dim=1, keepdim=True)[echo:512]
-s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
-mapping = learn_linear(y, s, s_opp)
-img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+# cols = slice(775, None)
+# rows = slice(echo, 512)
+# y = img[rows, cols]
+# s     = img.sum(dim=1, keepdim=True)[echo:512]
+# s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
+# mapping = learn_linear(y, s, s_opp)
+# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
 
-cols = slice(775, None)
-rows = slice(512, -echo)
-y = img[rows, cols]
-s     = img.sum(dim=1, keepdim=True)[512:-echo]
-s_opp = img.sum(dim=1, keepdim=True)[echo:512]
-mapping = learn_linear(y, s, s_opp)
-img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+# cols = slice(775, None)
+# rows = slice(512, -echo)
+# y = img[rows, cols]
+# s     = img.sum(dim=1, keepdim=True)[512:-echo]
+# s_opp = img.sum(dim=1, keepdim=True)[echo:512]
+# mapping = learn_linear(y, s, s_opp)
+# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+
 
 # ----- plotting -----
 # %% plot
