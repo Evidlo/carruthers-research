@@ -33,7 +33,7 @@ res = np.load('residual.npy')
 }
 
 default_scripts = {
-    'y/x/s': """\
+    'z/x/s': """\
 img = orig - bias
 #x = orig[rows]
 x = bias[rows]
@@ -53,16 +53,16 @@ s = np.clip(s, s.min(), np.percentile(s, b))
 #y = np.clip(y, -100, np.percentile(y, 95))
 
 # labels
-labelx = 'x'
+labelx = 'b'
 labely = 's'
-labelz = 'y'
+labelz = 'z'
 """,
-'y/s/s\'': """\
+'z/s/s\'': """\
 img = orig - bias
-x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[rows]
-y = (img)[rows_opp]
+x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[rows_opp]
+y = (img)[rows]
 # row statistic of opposite side
-s = np.sum(orig, axis=1)[rows_opp]
+s = np.sum(orig, axis=1)[rows]
 
 
 # limits (set with a & b sliders)
@@ -72,9 +72,9 @@ img = np.clip(img, -100, np.percentile(img, 95))
 s = np.clip(s, s.min(), np.percentile(s, b))
 
 # labels
-labelx = 's´'
+labelx = 's_opp'
 labely = 's'
-labelz = 'y'
+labelz = 'z'
 
 """,
 }
