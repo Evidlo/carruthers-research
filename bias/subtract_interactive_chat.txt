@@ -1,0 +1,626 @@
+
+╭─── Claude Code v2.1.29 ──────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Evon!                 │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│                                                    │                         │
+│ Opus 4.5 · Claude Pro · evan_claude@widloski.com's │                         │
+│  Organization                                      │                         │
+│          ~/sync/research/carruthers/bias           │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ I want to convert @subtract.py to an interactive Bokeh plot with sliders, 
+   numeric inputs, dropdown, etc.  When an input is changed, the plot       
+  should update.                                                            
+                                                                            
+  Update plot when slider is moved and released.                            
+  Update plot/sliderrange when numeric input loses focus.                   
+  Update plot when dropdown is changed.                                     
+                                                                            
+  Ask any clarifying questions you need in advance.  You should look at     
+  @bokeh_example.py as a reference.  Output your work to a new file         
+  `subtract_interactive.py`                                                 
+  ⎿  Read subtract.py (66 lines)
+  ⎿  Read bokeh_example.py (385 lines)
+
+● I have a couple of clarifying questions before building this.
+
+● User answered Claude's questions:
+  ⎿  · The function text input uses exec() to run arbitrary Python code. 
+     Should the plot update when you press Enter, or when the input loses 
+     focus (both are default TextInput behavior in Bokeh)? → Enter or blur 
+     (Recommended)
+     · The col_groups variable ([[0,1], [2,3,4,5], [6,7]]) is hardcoded. 
+     Should it stay hardcoded or be configurable? → Configurable
+
+● Got it -- Enter/blur for text inputs, and configurable col_groups. Let me
+  build this.
+
+● Write(subtract_interactive.py)
+  ⎿  Wrote 178 lines to subtract_interactive.py
+     #!/usr/bin/env python3
+     # Interactive Bokeh app for image subtraction and column analysis
+     # Run with: bokeh serve subtract_interactive.py --show 
+     --allow-websocket-origin=*
+
+     import json
+     import numpy as np
+     from bokeh.plotting import figure
+     from bokeh.io import curdoc
+     from bokeh.models import (ColumnDataSource, Slider, Spinner, Select,
+                               TextInput, Div, LinearColorMapper)
+     … +168 lines (ctrl+o to expand)
+
+● Written to subtract_interactive.py. Run it with:
+
+  bokeh serve subtract_interactive.py --show --allow-websocket-origin=*
+
+  Here's what maps from the original subtract.py:
+
+  Image fieldset -- Select dropdown for oob_wfi, oob_nfi, sci_wfi, sci_nfi
+
+  Clipping fieldset -- Slider for clip level, Spinner pair for start/stop
+  (changing these updates the slider range)
+
+  Subtraction fieldset:
+  - TextInput for the exec()-based function string
+  - TextInput for column groups (JSON format, e.g. [[0,1],[2,3,4,5],[6,7]])
+  - Slider + Spinner start/stop for each of a, b, c
+
+  Callback behavior:
+  - Sliders use value_throttled (fires on mouse release)
+  - Spinners use value (fires on commit) and also update the associated slider's
+   start/end
+  - Select and TextInput use value (fires on Enter / blur)
+  - Errors from exec() or bad JSON display in a red error div
+
+  Plots use multi_line glyphs so the number of lines/legend entries updates
+  dynamically when you change col_groups. The image uses LinearColorMapper with
+  Viridis256, flipped vertically to match matplotlib's top-origin convention.
+
+✻ Sautéed for 7m 40s
+
+❯ Add a "Steps" after "Start" and "Stop" for each input, default 500.  'a', 
+   'b', 'c' should be floats linearly spaced from start to stop.            
+                                                                            
+  Make the aspect ratio of "Image" equal to 1.  Also make the plots 50%     
+  wider/taller.                                                             
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(subtract_interactive.py)
+  ⎿  Added 1 line, removed 1 line
+      59  vline_source = ColumnDataSource(make_vline_data(col_w, nrows,  
+          DEFAULT_GROUPS))                                               
+      60                                                                 
+      61  # --- Figures ---                                              
+      62 -fig_lines = figure(width=450, height=350                       
+         -, title="Column Groups",                                       
+      62 +fig_lines = figure(width=675, height=525                       
+         +, title="Column Groups",                                       
+      63                     tools="pan,wheel_zoom,box_zoom,reset,save") 
+      64  fig_lines.multi_line(xs='xs', ys='ys', source=line_source,     
+      65                       line_color='colors', line_width=1.5,      
+
+● Update(subtract_interactive.py)
+  ⎿  Added 2 lines, removed 1 line
+      67  fig_lines.legend.click_policy = "hide"                         
+      68                                                                 
+      69  mapper = LinearColorMapper(palette=Viridis256, low=0, high=25) 
+      70 -fig_img = figure(width=450, height=350, title="Image",         
+      70 +fig_img = figure(width=675, height=525, title="Image",         
+      71                   x_range=(0, ncols), y_range=(0, nrows),       
+      72 +                 match_aspect=True,                            
+      73                   tools="pan,wheel_zoom,box_zoom,reset,save")   
+      74  fig_img.image(image='image', source=img_source,                
+      75                x=0, y=0, dw='dw', dh='dh', color_mapper=mapper) 
+
+● Now let me update the slider definitions and add Steps spinners. I'll replace
+  from the Clipping fieldset through the error div, and also update the
+  callbacks.
+
+● Update(subtract_interactive.py)
+  ⎿  Added 15 lines, removed 11 lines
+      82                  options=['oob_wfi', 'oob_nfi', 'sci_wfi',      
+          'sci_nfi'], width=200)                                         
+      83                                                                 
+      84  # Clipping fieldset                                            
+      85 -w_clip = Slider(title="Clip Level", value=25, start=0,         
+         -end=5000, step=1, width=250)                                   
+      86 -w_clip_lo = Spinner(title="Start", value=0, step=1, width=100) 
+      87 -w_clip_hi = Spinner(title="Stop", value=5000, step=1, width=100
+         -)                                                              
+      85 +w_clip = Slider(title="Clip Level", value=25, start=0,         
+         +end=5000, step=10, width=250)                                  
+      86 +w_clip_lo = Spinner(title="Start", value=0, step=1, width=80)  
+      87 +w_clip_hi = Spinner(title="Stop", value=5000, step=1, width=80)
+      88 +w_clip_steps = Spinner(title="Steps", value=500, step=1,       
+         +low=1, width=80)                                               
+      89                                                                 
+      90  # Subtraction fieldset                                         
+      91  w_func = TextInput(title="Function",                           
+     ...
+       93                       value=json.dumps(DEFAULT_GROUPS),        
+           width=300)                                                    
+       94                                                                
+       95  w_a = Slider(title="a", value=80, start=0, end=500, step=1,   
+           width=250)                                                    
+       96 -w_a_lo = Spinner(title="Start", value=0, step=1, width=100)   
+       97 -w_a_hi = Spinner(title="Stop", value=500, step=1, width=100)  
+       96 +w_a_lo = Spinner(title="Start", value=0, step=1, width=80)    
+       97 +w_a_hi = Spinner(title="Stop", value=500, step=1, width=80)   
+       98 +w_a_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          +width=80)                                                     
+       99                                                                
+      100 -w_b = Slider(title="b", value=1, start=0, end=1, step=0.01    
+          -, width=250)                                                  
+      101 -w_b_lo = Spinner(title="Start", value=0, step=0.01, width=100)
+      102 -w_b_hi = Spinner(title="Stop", value=1, step=0.01, width=100) 
+      100 +w_b = Slider(title="b", value=1, start=0, end=1, step=0.002   
+          +, width=250)                                                  
+      101 +w_b_lo = Spinner(title="Start", value=0, step=0.01, width=80) 
+      102 +w_b_hi = Spinner(title="Stop", value=1, step=0.01, width=80)  
+      103 +w_b_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          +width=80)                                                     
+      104                                                                
+      105 -w_c = Slider(title="c", value=1, start=0, end=1, step=0.01    
+          -, width=250)                                                  
+      106 -w_c_lo = Spinner(title="Start", value=0, step=0.01, width=100)
+      107 -w_c_hi = Spinner(title="Stop", value=1, step=0.01, width=100) 
+      105 +w_c = Slider(title="c", value=1, start=0, end=1, step=0.002   
+          +, width=250)                                                  
+      106 +w_c_lo = Spinner(title="Start", value=0, step=0.01, width=80) 
+      107 +w_c_hi = Spinner(title="Stop", value=1, step=0.01, width=80)  
+      108 +w_c_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          +width=80)                                                     
+      109                                                                
+      110  w_err = Div(text="", width=300)                               
+      111                                                                
+
+● Now update the callbacks and wiring to handle the steps spinners:
+
+● Update(subtract_interactive.py)
+  ⎿  Added 14 lines, removed 10 lines
+      138      refresh()                                                 
+      139                                                                
+      140                                                                
+      141 -def range_cb(slider, attr):                                   
+      142 -    def cb(a, old, new):                                      
+      143 -        setattr(slider, attr, new)                            
+      141 +def make_range_cb(slider, lo, hi, steps):                     
+      142 +    def cb(attr, old, new):                                   
+      143 +        slider.start = lo.value                               
+      144 +        slider.end = hi.value                                 
+      145 +        slider.step = (hi.value - lo.value) /                 
+          +max(steps.value, 1)                                           
+      146          refresh()                                             
+      147      return cb                                                 
+      148                                                                
+     ...
+      154  w_func.on_change('value', on_change)                          
+      155  w_groups.on_change('value', on_change)                        
+      156                                                                
+      157 -# Spinners: update slider range and recompute                 
+      158 -for slider, lo, hi in [(w_clip, w_clip_lo, w_clip_hi),        
+      159 -                       (w_a, w_a_lo, w_a_hi),                 
+      160 -                       (w_b, w_b_lo, w_b_hi),                 
+      161 -                       (w_c, w_c_lo, w_c_hi)]:                
+      162 -    lo.on_change('value', range_cb(slider, 'start'))          
+      163 -    hi.on_change('value', range_cb(slider, 'end'))            
+      157 +# Spinners: update slider range/step and recompute            
+      158 +for slider, lo, hi, steps in [(w_clip, w_clip_lo, w_clip_hi   
+          +, w_clip_steps),                                              
+      159 +                               (w_a, w_a_lo, w_a_hi,          
+          +w_a_steps),                                                   
+      160 +                               (w_b, w_b_lo, w_b_hi,          
+          +w_b_steps),                                                   
+      161 +                               (w_c, w_c_lo, w_c_hi,          
+          +w_c_steps)]:                                                  
+      162 +    cb = make_range_cb(slider, lo, hi, steps)                 
+      163 +    lo.on_change('value', cb)                                 
+      164 +    hi.on_change('value', cb)                                 
+      165 +    steps.on_change('value', cb)                              
+      166                                                                
+      167                                                                
+      168  # --- Layout ---                                              
+
+● Now update the layout to include the Steps spinners:
+
+● Update(subtract_interactive.py)
+  ⎿  Added 4 lines, removed 4 lines
+      172      Div(text="<b>Image</b>"),                                 
+      173      w_file,                                                   
+      174      Div(text="<b>Clipping</b>"),                              
+      175 -    w_clip, row(w_clip_lo, w_clip_hi),                        
+      175 +    w_clip, row(w_clip_lo, w_clip_hi, w_clip_steps),          
+      176      Div(text="<b>Subtraction</b>"),                           
+      177      w_func, w_groups,                                         
+      178 -    w_a, row(w_a_lo, w_a_hi),                                 
+      179 -    w_b, row(w_b_lo, w_b_hi),                                 
+      180 -    w_c, row(w_c_lo, w_c_hi),                                 
+      178 +    w_a, row(w_a_lo, w_a_hi, w_a_steps),                      
+      179 +    w_b, row(w_b_lo, w_b_hi, w_b_steps),                      
+      180 +    w_c, row(w_c_lo, w_c_hi, w_c_steps),                      
+      181      w_err,                                                    
+      182  )                                                             
+      183                                                                
+
+● Let me verify the final state of the file.
+
+● Read 1 file (ctrl+o to expand)
+
+● Changes made:
+
+  - Steps spinners added for each slider group (clip, a, b, c) with default 500
+  and low=1. Initial slider steps are consistent: (stop - start) / 500 (e.g.
+  clip=10, a=1, b=0.002, c=0.002). Changing Start, Stop, or Steps recomputes the
+   slider's step property via make_range_cb.
+  - Image aspect ratio set to equal via match_aspect=True on fig_img.
+  - Plot sizes increased 50% from 450x350 to 675x525.
+
+✻ Baked for 57s
+
+❯ The image plot still seems to not have 1:1 aspect ratio. 
+
+● The issue is likely that the figure frame is non-square (675x525) which causes
+   match_aspect to pad rather than truly enforce 1:1 on the data. Let me switch
+  to using DataRange1d with zero padding so Bokeh auto-ranges from the image
+  glyph, and remove the manual range overrides that fight match_aspect.
+
+● Update(subtract_interactive.py)
+  ⎿  Added 1 line, removed 1 line
+       7  from bokeh.plotting import figure                              
+       8  from bokeh.io import curdoc                                    
+       9  from bokeh.models import (ColumnDataSource, Slider, Spinner,   
+          Select,                                                        
+      10 -                          TextInput, Div, LinearColorMapper)   
+      10 +                          TextInput, Div, LinearColorMapper    
+         +, DataRange1d)                                                 
+      11  from bokeh.layouts import row, column                          
+      12  from bokeh.palettes import Viridis256, Category10_10           
+      13                                                                 
+
+● Update(subtract_interactive.py)
+  ⎿  Added 2 lines, removed 1 line
+      68                                                                 
+      69  mapper = LinearColorMapper(palette=Viridis256, low=0, high=25) 
+      70  fig_img = figure(width=675, height=525, title="Image",         
+      71 -                 x_range=(0, ncols), y_range=(0, nrows),       
+      71 +                 x_range=DataRange1d(range_padding=0),         
+      72 +                 y_range=DataRange1d(range_padding=0),         
+      73                   match_aspect=True,                            
+      74                   tools="pan,wheel_zoom,box_zoom,reset,save")   
+      75  fig_img.image(image='image', source=img_source,                
+
+● Now remove the manual range overrides in refresh() that fight match_aspect:
+
+● Update(subtract_interactive.py)
+  ⎿  Removed 4 lines
+      126          vline_source.data = make_vline_data(cw, nr,           
+           col_groups)                                                   
+      127                                                                
+      128          mapper.high = max(w_clip.value, 1e-6)                 
+      129 -        fig_img.x_range.start = 0                             
+      130 -        fig_img.x_range.end = nc                              
+      131 -        fig_img.y_range.start = 0                             
+      132 -        fig_img.y_range.end = nr                              
+      129          w_err.text = ""                                       
+      130      except Exception as e:                                    
+      131          w_err.text = f'<span style="color: red">{e}</span>'   
+
+● The changes:
+
+  1. Switched the image figure from explicit Range1d to
+  DataRange1d(range_padding=0) -- this lets Bokeh auto-compute the ranges from
+  the image glyph's dw/dh fields in the data source, rather than manually
+  setting them.
+  2. Kept match_aspect=True -- now that nothing is overriding the ranges each
+  refresh, Bokeh can properly enforce equal scaling (1 data unit = same screen
+  pixels in both axes).
+  3. Removed the manual x_range/y_range updates in refresh() that were fighting
+  the aspect correction on every update.
+
+✻ Cooked for 3m 49s
+
+❯ OK, now I'd like all the inputs to be stored in querystrings in the URL.  
+   If the page is loaded with querystring present, the input values should  
+  be loaded from there.                                                     
+
+● Read 1 file (ctrl+o to expand)
+
+● Write(subtract_interactive.py)
+  ⎿  Added 128 lines, removed 33 lines
+       7  from bokeh.plotting import figure                              
+       8  from bokeh.io import curdoc                                    
+       9  from bokeh.models import (ColumnDataSource, Slider, Spinner,   
+          Select,                                                        
+      10 -                          TextInput, Div, LinearColorMapper,   
+         -DataRange1d)                                                   
+      10 +                          TextInput, Div, LinearColorMapper,   
+         +DataRange1d,                                                   
+      11 +                          CustomJS)                            
+      12  from bokeh.layouts import row, column                          
+      13  from bokeh.palettes import Viridis256, Category10_10           
+      14 +from bokeh.events import DocumentReady                         
+      15                                                                 
+      16  DEFAULT_GROUPS = [[0, 1], [2, 3, 4, 5], [6, 7]]                
+      17 +FILE_OPTIONS = ['oob_wfi', 'oob_nfi', 'sci_wfi', 'sci_nfi']    
+      18                                                                 
+      19                                                                 
+      20 +# --- Parse URL query params ---                               
+      21 +_raw_args = {}                                                 
+      22 +if curdoc().session_context and                                
+         +curdoc().session_context.request:                              
+      23 +    _raw_args = curdoc().session_context.request.arguments     
+      24 +                                                               
+      25 +                                                               
+      26 +def _get(key, default):                                        
+      27 +    if key in _raw_args:                                       
+      28 +        try:                                                   
+      29 +            raw = _raw_args[key][0].decode()                   
+      30 +            if isinstance(default, float):                     
+      31 +                return float(raw)                              
+      32 +            elif isinstance(default, int):                     
+      33 +                return int(float(raw))                         
+      34 +            return raw                                         
+      35 +        except (ValueError, IndexError):                       
+      36 +            pass                                               
+      37 +    return default                                             
+      38 +                                                               
+      39 +                                                               
+      40 +p = dict(                                                      
+      41 +    file=_get('file', 'oob_wfi'),                              
+      42 +    clip=_get('clip', 25.0),                                   
+      43 +    clip_lo=_get('clip_lo', 0.0),                              
+      44 +    clip_hi=_get('clip_hi', 5000.0),                           
+      45 +    clip_steps=_get('clip_steps', 500),                        
+      46 +    func=_get('func', 'x += x.mean(axis=1, keepdims=True) /    
+         +a'),                                                           
+      47 +    groups=_get('groups', json.dumps(DEFAULT_GROUPS)),         
+      48 +    a=_get('a', 80.0),                                         
+      49 +    a_lo=_get('a_lo', 0.0),                                    
+      50 +    a_hi=_get('a_hi', 500.0),                                  
+      51 +    a_steps=_get('a_steps', 500),                              
+      52 +    b=_get('b', 1.0),                                          
+      53 +    b_lo=_get('b_lo', 0.0),                                    
+      54 +    b_hi=_get('b_hi', 1.0),                                    
+      55 +    b_steps=_get('b_steps', 500),                              
+      56 +    c=_get('c', 1.0),                                          
+      57 +    c_lo=_get('c_lo', 0.0),                                    
+      58 +    c_hi=_get('c_hi', 1.0),                                    
+      59 +    c_steps=_get('c_steps', 500),                              
+      60 +)                                                              
+      61 +                                                               
+      62 +if p['file'] not in FILE_OPTIONS:                              
+      63 +    p['file'] = 'oob_wfi'                                      
+      64 +try:                                                           
+      65 +    json.loads(p['groups'])                                    
+      66 +except (json.JSONDecodeError, TypeError):                      
+      67 +    p['groups'] = json.dumps(DEFAULT_GROUPS)                   
+      68 +                                                               
+      69 +                                                               
+      70 +def _step(lo, hi, steps):                                      
+      71 +    return (hi - lo) / max(steps, 1)                           
+      72 +                                                               
+      73 +                                                               
+      74 +# --- Computation ---                                          
+      75  def compute(file_name, clip_level, func_str, a, b, c,          
+          col_groups):                                                   
+      76      x = np.load(f'images/{file_name}.npy') / 300               
+      77      ns = {'x': x, 'a': a, 'b': b, 'c': c, 'np': np}            
+     ...
+      48                                                                 
+      49                                                                 
+      50  # --- Initial computation ---                                  
+      51 +col_groups_init = json.loads(p['groups'])                      
+      52  squish, img, col_w = compute(                                  
+      53 -    'oob_wfi', 25, 'x += x.mean(axis=1, keepdims=True) / a',   
+      54 -    80, 1, 1, DEFAULT_GROUPS)                                  
+      53 +    p['file'], p['clip'], p['func'],                           
+      54 +    p['a'], p['b'], p['c'], col_groups_init)                   
+      55  nrows, ncols = img.shape                                       
+      56                                                                 
+      57  # --- Data Sources ---                                         
+      58 -line_source = ColumnDataSource(make_line_data(squish,          
+         -DEFAULT_GROUPS))                                               
+      58 +line_source = ColumnDataSource(make_line_data(squish,          
+         +col_groups_init))                                              
+      59  img_source = ColumnDataSource(dict(image=[img[::-1]],          
+          dw=[ncols], dh=[nrows]))                                       
+      60 -vline_source = ColumnDataSource(make_vline_data(col_w, nrows,  
+         -DEFAULT_GROUPS))                                               
+      60 +vline_source = ColumnDataSource(make_vline_data(col_w, nrows,  
+         +col_groups_init))                                              
+      61                                                                 
+      62  # --- Figures ---                                              
+      63  fig_lines = figure(width=675, height=525, title="Column        
+          Groups",                                                       
+     ...
+      66                       legend_field='labels')                    
+      67  fig_lines.legend.click_policy = "hide"                         
+      68                                                                 
+      69 -mapper = LinearColorMapper(palette=Viridis256, low=0, high=25) 
+      69 +mapper = LinearColorMapper(palette=Viridis256, low=0, high=    
+         +p['clip'])                                                     
+      70  fig_img = figure(width=675, height=525, title="Image",         
+      71                   x_range=DataRange1d(range_padding=0),         
+      72                   y_range=DataRange1d(range_padding=0),         
+     ...
+       78                     line_color='red', line_width=2)            
+       79                                                                
+       80  # --- Widgets ---                                             
+       81 -# Image fieldset                                              
+       82 -w_file = Select(title="Image", value='oob_wfi',               
+       83 -                options=['oob_wfi', 'oob_nfi', 'sci_wfi',     
+          -'sci_nfi'], width=200)                                        
+       81 +w_file = Select(title="Image", value=p['file'],               
+       82 +                options=FILE_OPTIONS, width=200)              
+       83                                                                
+       84 -# Clipping fieldset                                           
+       85 -w_clip = Slider(title="Clip Level", value=25, start=0,        
+          -end=5000, step=10, width=250)                                 
+       86 -w_clip_lo = Spinner(title="Start", value=0, step=1, width=80) 
+       87 -w_clip_hi = Spinner(title="Stop", value=5000                  
+          -, step=1, width=80)                                           
+       88 -w_clip_steps = Spinner(title="Steps", value=500, step=1,      
+          -low=1, width=80)                                              
+       84 +w_clip = Slider(title="Clip Level", value=p['clip'],          
+       85 +                start=p['clip_lo'], end=p['clip_hi'],         
+       86 +                step=_step(p['clip_lo'], p['clip_hi'],        
+          +p['clip_steps']), width=250)                                  
+       87 +w_clip_lo = Spinner(title="Start", value=p['clip_lo']         
+          +, step=1, width=80)                                           
+       88 +w_clip_hi = Spinner(title="Stop", value=p['clip_hi'], step=1, 
+          +width=80)                                                     
+       89 +w_clip_steps = Spinner(title="Steps", value=p['clip_steps'],  
+          +step=1, low=1, width=80)                                      
+       90                                                                
+       91 -# Subtraction fieldset                                        
+       92 -w_func = TextInput(title="Function",                          
+       93 -                   value='x += x.mean(axis=1, keepdims=True)  
+          -/ a', width=300)                                              
+       94 -w_groups = TextInput(title="Column Groups",                   
+       95 -                     value=json.dumps(DEFAULT_GROUPS),        
+          -width=300)                                                    
+       91 +w_func = TextInput(title="Function", value=p['func'],         
+          +width=300)                                                    
+       92 +w_groups = TextInput(title="Column Groups",                   
+          +value=p['groups'], width=300)                                 
+       93                                                                
+       94 -w_a = Slider(title="a", value=80, start=0, end=500, step=1,   
+          -width=250)                                                    
+       95 -w_a_lo = Spinner(title="Start", value=0, step=1, width=80)    
+       96 -w_a_hi = Spinner(title="Stop", value=500, step=1, width=80)   
+       97 -w_a_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          -width=80)                                                     
+       94 +w_a = Slider(title="a", value=p['a'],                         
+       95 +             start=p['a_lo'], end=p['a_hi'],                  
+       96 +             step=_step(p['a_lo'], p['a_hi'], p['a_steps']),  
+          +width=250)                                                    
+       97 +w_a_lo = Spinner(title="Start", value=p['a_lo'], step=1,      
+          +width=80)                                                     
+       98 +w_a_hi = Spinner(title="Stop", value=p['a_hi'], step=1,       
+          +width=80)                                                     
+       99 +w_a_steps = Spinner(title="Steps", value=p['a_steps'],        
+          +step=1, low=1, width=80)                                      
+      100                                                                
+      101 -w_b = Slider(title="b", value=1, start=0, end=1, step=0.002,  
+          -width=250)                                                    
+      102 -w_b_lo = Spinner(title="Start", value=0, step=0.01, width=80) 
+      103 -w_b_hi = Spinner(title="Stop", value=1, step=0.01, width=80)  
+      104 -w_b_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          -width=80)                                                     
+      101 +w_b = Slider(title="b", value=p['b'],                         
+      102 +             start=p['b_lo'], end=p['b_hi'],                  
+      103 +             step=_step(p['b_lo'], p['b_hi'], p['b_steps']),  
+          +width=250)                                                    
+      104 +w_b_lo = Spinner(title="Start", value=p['b_lo'], step=0.01,   
+          +width=80)                                                     
+      105 +w_b_hi = Spinner(title="Stop", value=p['b_hi'], step=0.01,    
+          +width=80)                                                     
+      106 +w_b_steps = Spinner(title="Steps", value=p['b_steps'],        
+          +step=1, low=1, width=80)                                      
+      107                                                                
+      108 -w_c = Slider(title="c", value=1, start=0, end=1, step=0.002,  
+          -width=250)                                                    
+      109 -w_c_lo = Spinner(title="Start", value=0, step=0.01, width=80) 
+      110 -w_c_hi = Spinner(title="Stop", value=1, step=0.01, width=80)  
+      111 -w_c_steps = Spinner(title="Steps", value=500, step=1, low=1,  
+          -width=80)                                                     
+      108 +w_c = Slider(title="c", value=p['c'],                         
+      109 +             start=p['c_lo'], end=p['c_hi'],                  
+      110 +             step=_step(p['c_lo'], p['c_hi'], p['c_steps']),  
+          +width=250)                                                    
+      111 +w_c_lo = Spinner(title="Start", value=p['c_lo'], step=0.01,   
+          +width=80)                                                     
+      112 +w_c_hi = Spinner(title="Stop", value=p['c_hi'], step=0.01,    
+          +width=80)                                                     
+      113 +w_c_steps = Spinner(title="Steps", value=p['c_steps'],        
+          +step=1, low=1, width=80)                                      
+      114                                                                
+      115  w_err = Div(text="", width=300)                               
+      116                                                                
+      117                                                                
+      118 -# --- Callbacks ---                                           
+      118 +# --- URL sync (client-side JS) ---                           
+      119 +_url_args = dict(                                             
+      120 +    w_file=w_file, w_clip=w_clip,                             
+      121 +    w_clip_lo=w_clip_lo, w_clip_hi=w_clip_hi,                 
+          +w_clip_steps=w_clip_steps,                                    
+      122 +    w_func=w_func, w_groups=w_groups,                         
+      123 +    w_a=w_a, w_a_lo=w_a_lo, w_a_hi=w_a_hi,                    
+          +w_a_steps=w_a_steps,                                          
+      124 +    w_b=w_b, w_b_lo=w_b_lo, w_b_hi=w_b_hi,                    
+          +w_b_steps=w_b_steps,                                          
+      125 +    w_c=w_c, w_c_lo=w_c_lo, w_c_hi=w_c_hi,                    
+          +w_c_steps=w_c_steps,                                          
+      126 +)                                                             
+      127 +                                                              
+      128 +_url_js = CustomJS(args=_url_args, code="""                   
+      129 +    const m = {                                               
+      130 +        file: w_file, clip: w_clip,                           
+      131 +        clip_lo: w_clip_lo, clip_hi: w_clip_hi, clip_steps:   
+          +w_clip_steps,                                                 
+      132 +        func: w_func, groups: w_groups,                       
+      133 +        a: w_a, a_lo: w_a_lo, a_hi: w_a_hi, a_steps:          
+          +w_a_steps,                                                    
+      134 +        b: w_b, b_lo: w_b_lo, b_hi: w_b_hi, b_steps:          
+          +w_b_steps,                                                    
+      135 +        c: w_c, c_lo: w_c_lo, c_hi: w_c_hi, c_steps:          
+          +w_c_steps,                                                    
+      136 +    };                                                        
+      137 +    const p = new URLSearchParams();                          
+      138 +    for (const [k, w] of Object.entries(m)) {                 
+      139 +        p.set(k, String(w.value));                            
+      140 +    }                                                         
+      141 +    window.history.replaceState({}, '', '?' + p.toString());  
+      142 +""")                                                          
+      143 +                                                              
+      144 +for _w in _url_args.values():                                 
+      145 +    _w.js_on_change('value', _url_js)                         
+      146 +                                                              
+      147 +# Also set URL on initial page load                           
+      148 +curdoc().js_on_event(DocumentReady, _url_js)                  
+      149 +                                                              
+      150 +                                                              
+      151 +# --- Server callbacks ---                                    
+      152  def refresh():                                                
+      153      try:                                                      
+      154          col_groups = json.loads(w_groups.value)               
+     ...
+      148  for s in [w_clip, w_a, w_b, w_c]:                             
+      149      s.on_change('value_throttled', on_change)                 
+      150                                                                
+      151 -# Dropdown and text inputs: update on value change (Enter /   
+          -blur)                                                         
+      151 +# Dropdown and text inputs                                    
+      152  w_file.on_change('value', on_change)                          
+      153  w_func.on_change('value', on_change)                          
+      154  w_groups.on_change('value', on_change)                        
+
+● Here's what was added:
+
+  Loading from URL (lines 20-67): On startup,
+  curdoc().session_context.request.arguments is read. Each query param is parsed
+   with _get(), which decodes bytes and coerces to the correct type
+  (float/int/str) based on the default value. Invalid values fall back to
+  defaults. The file param is validated against FILE_OPTIONS, and groups is
+  validated as parseable JSON.
+
+  Initializing from params (lines 108-172): The p dict feeds both the initial
+  compute() call and all widget constructors, so everything is consistent on
+  load.
+
+  Writing to URL (lines 177-207): A CustomJS callback iterates all widgets and
+  serializes their values into URLSearchParams, then calls history.replaceState
+  to update the browser URL without reloading. It's attached to every widget via
+   js_on_change('value', ...), and also fires on DocumentReady to populate the
+  URL on first load.
+
+  A URL like ?file=oob_nfi&clip=50&a=120&b=0.5 will restore those exact widget
+  states on page load. Any param not present in the URL uses its default.
+
+✻ Cooked for 4m 40s
