@@ -259,6 +259,11 @@ def update_3d_plot(a, b, plot_code, col_range, _rows, _):
     colors = go.Figure().layout.template.layout.colorway
 
     fig_3d = go.Figure()
+    fig_3d.add_trace(go.Scatter3d(
+        x=[], y=[], z=[], mode='markers',
+        marker=dict(size=8, color='white', line=dict(width=2, color='black')),
+        showlegend=False, name='_highlight'
+    ))
     for i, col in enumerate(selected_cols):
         c = colors[i % len(colors)]
         rows = np.arange(x.shape[0])
@@ -468,5 +473,35 @@ def highlight_pixel(hover_data, col_range):
     ]
     return patched
 
+@app.callback(
+    Output('plot-3d', 'figure', allow_duplicate=True),
+    Input('plot-2d', 'hoverData'),
+    State('slider-a', 'value'),
+    State('slider-b', 'value'),
+    State('plotting', 'value'),
+    prevent_initial_call=True
+)
+def highlight_3d_point(hover_data, a, b, plot_code):
+    patched = Patch()
+    if not hover_data:
+        patched['data'][0]['x'] = []
+        patched['data'][0]['y'] = []
+        patched['data'][0]['z'] = []
+        return patched
+    col = int(round(hover_data['points'][0]['x']))
+    row_abs = int(round(hover_data['points'][0]['y']))
+    x, y, s, img, y2, *_ = compute_plot(a, b, plot_code)
+    row_start = namespace['rows'].start or 0
+    row_rel = row_abs - row_start
+    if 0 <= row_rel < x.shape[0] and 0 <= col < x.shape[1]:
+        patched['data'][0]['x'] = [float(x[row_rel, col])]
+        patched['data'][0]['y'] = [float(s[row_rel])]
+        patched['data'][0]['z'] = [float(y[row_rel, col])]
+    else:
+        patched['data'][0]['x'] = []
+        patched['data'][0]['y'] = []
+        patched['data'][0]['z'] = []
+    return patched
+
 if __name__ == '__main__':
-    app.run(debug=True, host='localhost', port=8889)
+    app.run(debug=False, host='localhost', port=8889)
