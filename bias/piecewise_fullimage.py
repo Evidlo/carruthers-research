@@ -74,7 +74,7 @@ def learn_pwl(y, s, iterations=2000):
     return p
 
 
-img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl')).to(device)
+img = t.from_numpy(load(path:='images_20260117/oob_nfi_l0.pkl')).to(device)
 img_flat_pwl = img.clone()
 
 # row to begin clipping of echo
@@ -117,6 +117,8 @@ img_flat_pwl[rows, cols] -= mapping(s)
 # lower row stat
 bs = s
 bmapping = mapping
+brows = rows
+bcols = cols
 
 cols = slice(775, None)
 rows = slice(echo, 512)
@@ -164,10 +166,21 @@ iplt.scatter3d(
     umapping.y_positions[:, 0],
     bmapping.slopes[:, -1]
 )
+iplt.gcf().layout.scene.camera.projection.type = 'orthographic'
+iplt.gcf().layout.scene.camera.eye = dict(x=0, y=1, z=0)
 iplt.xlabel('Bias')
 iplt.ylabel('Bias (opposite side)')
 iplt.zlabel('Slope')
+iplt.zlim([-20e-6, 0])
 iplt.savefig('/www/slopes.html')
+
+# residual computation
+xx = bmapping.y_positions[:, 0]
+yy = bmapping.slopes[:, -1].to(t.float64)
+A = yy[:, None].repeat(1, 2); A[:, 1] = 1
+residual = np.zeros(img.shape)
+residual[512:, bcols] = (xx - (A @ t.inverse(A.T @ A) @ A.T) @ xx).detach().cpu()
+np.save('residual.npy', residual)
 
 
 # 3D scatter of y, s and s_opp
@@ -186,7 +199,7 @@ iplt.scatter3d(
     s_opp,
     y
 )
-iplt.xlim((detach(s.min()), np.percentile(detach(s), 70)))
+# iplt.xlim((detach(s.min()), np.percentile(detach(s), 70)))
 iplt.zlim((y.min(), 5))
 iplt.xlabel('Stat.')
 iplt.ylabel('Stat. (opp)')

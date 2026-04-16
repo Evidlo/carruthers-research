@@ -332,14 +332,21 @@ def update_2d_plot(n_clicks, a, b, plot_code, col_range):
     State('b-min', 'value'),
     State('b-max', 'value'),
     State('b-steps', 'value'),
+    State('img-type', 'value'),
+    State('img-dir', 'value'),
+    State('setup-preset', 'value'),
+    State('plotting-preset', 'value'),
     prevent_initial_call=True
 )
-def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min, b_max, b_steps):
+def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min, b_max, b_steps,
+                  img_type, img_dir, setup_preset, plotting_preset):
     params = {
         'a': a, 'b': b, 'plotting': transform,
         'cols': f'{cols[0]}:{cols[1]}',
         'a_min': a_min, 'a_max': a_max, 'a_steps': a_steps,
-        'b_min': b_min, 'b_max': b_max, 'b_steps': b_steps
+        'b_min': b_min, 'b_max': b_max, 'b_steps': b_steps,
+        'img_type': img_type, 'img_dir': img_dir,
+        'setup_preset': setup_preset, 'plotting_preset': plotting_preset,
     }
     url = f'https://copernicus.ece.illinois.edu/surface/?{urlencode(params)}'
     return url
@@ -355,6 +362,10 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
     Output('b-min', 'value'),
     Output('b-max', 'value'),
     Output('b-steps', 'value'),
+    Output('img-type', 'value'),
+    Output('img-dir', 'value'),
+    Output('setup-preset', 'value'),
+    Output('plotting-preset', 'value'),
     Output('initialized', 'data'),
     Input('url', 'search'),
     State('initialized', 'data'),
@@ -362,16 +373,24 @@ def copy_settings(n_clicks, a, b, transform, cols, a_min, a_max, a_steps, b_min,
 )
 def load_from_url(search, initialized):
     D = DEFAULTS
+    default_img_type = 'oob_nfi_l0'
+    default_img_dir = image_dirs[0]
+    default_setup_preset = next(iter(default_setups.keys()))
+    default_plotting_preset = next(iter(default_scripts.keys()))
     if initialized or not search:
         return [D['a'], D['b'], next(iter(default_scripts.values())), f"{D['cols'][0]}:{D['cols'][1]}",
                 D['a_min'], D['a_max'], D['a_steps'],
-                D['b_min'], D['b_max'], D['b_steps'], True]
+                D['b_min'], D['b_max'], D['b_steps'],
+                default_img_type, default_img_dir, default_setup_preset, default_plotting_preset,
+                True]
 
     params = parse_qs(search.lstrip('?'))
+    setup_preset = params.get('setup_preset', [default_setup_preset])[0]
+    plotting_preset = params.get('plotting_preset', [default_plotting_preset])[0]
     return [
         float(params.get('a', [D['a']])[0]),
         float(params.get('b', [D['b']])[0]),
-        params.get('plotting', [next(iter(default_scripts.values()))])[0],
+        params.get('plotting', [default_scripts.get(plotting_preset, next(iter(default_scripts.values())))])[0],
         params.get('cols', [f"{D['cols'][0]}:{D['cols'][1]}"])[0],
         float(params.get('a_min', [D['a_min']])[0]),
         float(params.get('a_max', [D['a_max']])[0]),
@@ -379,6 +398,10 @@ def load_from_url(search, initialized):
         float(params.get('b_min', [D['b_min']])[0]),
         float(params.get('b_max', [D['b_max']])[0]),
         int(params.get('b_steps', [D['b_steps']])[0]),
+        params.get('img_type', [default_img_type])[0],
+        params.get('img_dir', [default_img_dir])[0],
+        setup_preset,
+        plotting_preset,
         True
     ]
 

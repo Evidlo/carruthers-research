@@ -42,7 +42,7 @@ def surface(s, s_opp, bias, slope, offset, mask):
     linear = offset.unsqueeze(0) + slope[0].unsqueeze(0) * s + slope[1].unsqueeze(0) * s_opp  # (N, C)
     return t.where(mask, linear, t.ones_like(linear) * bias)
 
-def learn_linear(y, s, s_opp, iterations=30000):
+def learn_linear(y, s, s_opp, iterations=10000):
     """Fit a thresholded linear surface to y as a function of s and s_opp.
 
     Args:
@@ -76,8 +76,9 @@ def learn_linear(y, s, s_opp, iterations=30000):
         optim.zero_grad()
 
         surf = surface(s, s_opp, bias, slope, offset, mask)
-        # loss = trimmed_norm((y - surf)[mask.squeeze()]**2, .8)
-        loss = trimmed_norm((y - surf)**2, .8)
+        resid2 = (y - surf)**2
+        m = mask.squeeze()
+        loss = trimmed_norm(resid2[m], .8) + trimmed_norm(resid2[~m], .8)
         loss.backward()
 
         loss_hist.append(float(loss))
@@ -103,23 +104,19 @@ echo_bias = 150
 
 img_flat_orig = img.clone()
 img_flat_orig -= mean_bias(img_flat_orig, echo_bias, echo_bias)
-# img_flat_orig[echo:512, :400] -= img[echo:250, :400].mean(dim=0, keepdim=True)
-# img_flat_orig[echo:512, 775:] -= img[echo:250, 775:].mean(dim=0, keepdim=True)
-# img_flat_orig[-512:-echo, :400] -= img_flat_orig[-250:-echo, :400].mean(dim=0, keepdim=True)
-# img_flat_orig[-512:-echo, 775:] -= img_flat_orig[-250:-echo, 775:].mean(dim=0, keepdim=True)
 
 # --- training ---
-# cols = slice(0, 400)
-# rows = slice(echo, 512)
-# y = img[rows, cols]
-# s     = img.sum(dim=1, keepdim=True)[echo:512]
-# s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
-# mapping = learn_linear(y, s, s_opp)
-# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+cols = slice(0, 400)
+rows = slice(echo, 512)
+y = img[rows, cols]
+s     = img.sum(dim=1, keepdim=True)[echo:512]
+s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
+mapping = learn_linear(y, s, s_opp)
+img_flat_pwl[rows, cols] -= mapping(s, s_opp)
 
-# from plotting import plot_profile_linear, detach
-# plot_profile_linear(s, s_opp, y, mapping, col=200)
-# iplt.savefig('/www/profile_linear1.html')
+from plotting import plot_profile_linear, detach
+plot_profile_linear(s, s_opp, y, mapping, col=200)
+iplt.savefig('/www/profile_linear1.html')
 
 cols = slice(0, 400)
 rows = slice(512, -echo)
@@ -133,21 +130,21 @@ from plotting import plot_profile_linear, detach
 plot_profile_linear(s, s_opp, y, mapping, col=200)
 iplt.savefig('/www/profile_linear2.html')
 
-# cols = slice(775, None)
-# rows = slice(echo, 512)
-# y = img[rows, cols]
-# s     = img.sum(dim=1, keepdim=True)[echo:512]
-# s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
-# mapping = learn_linear(y, s, s_opp)
-# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+cols = slice(775, None)
+rows = slice(echo, 512)
+y = img[rows, cols]
+s     = img.sum(dim=1, keepdim=True)[echo:512]
+s_opp = img.sum(dim=1, keepdim=True)[512:-echo]
+mapping = learn_linear(y, s, s_opp)
+img_flat_pwl[rows, cols] -= mapping(s, s_opp)
 
-# cols = slice(775, None)
-# rows = slice(512, -echo)
-# y = img[rows, cols]
-# s     = img.sum(dim=1, keepdim=True)[512:-echo]
-# s_opp = img.sum(dim=1, keepdim=True)[echo:512]
-# mapping = learn_linear(y, s, s_opp)
-# img_flat_pwl[rows, cols] -= mapping(s, s_opp)
+cols = slice(775, None)
+rows = slice(512, -echo)
+y = img[rows, cols]
+s     = img.sum(dim=1, keepdim=True)[512:-echo]
+s_opp = img.sum(dim=1, keepdim=True)[echo:512]
+mapping = learn_linear(y, s, s_opp)
+img_flat_pwl[rows, cols] -= mapping(s, s_opp)
 
 
 # ----- plotting -----
@@ -174,27 +171,3 @@ iplt.clim(-10, 10)
 iplt.colorbar()
 iplt.title("PWL Bias Subtraction: y - f₂(b, s)")
 iplt.savefig('/www/flatlinear.html', dpi=400)
-
-
-# 3D scatter of y, s and s_opp
-iplt.close()
-echo = 150
-rows = slice(echo, 512)
-# cols = slice(100, 101)
-# the other values of cols are busted? why
-# scatter3d only seems to show last?
-cols = 200
-y = img_flat_orig[rows, cols].cpu()
-s = img[rows].sum(axis=1)
-s_opp = img[echo+512:].sum(axis=1)
-iplt.scatter3d(
-    s,
-    s_opp,
-    y
-)
-# iplt.xlim((detach(s.min()), np.percentile(detach(s), 70)))
-iplt.zlim((y.min(), 5))
-iplt.xlabel('Stat.')
-iplt.ylabel('Stat. (opp)')
-# iplt.zlabel('Y')
-iplt.savefig('/www/echo.html')

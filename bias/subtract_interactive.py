@@ -15,7 +15,7 @@ from bokeh.models import (ColumnDataSource, Slider, Spinner, MultiChoice, Select
 from bokeh.layouts import row, column
 from bokeh.palettes import Viridis256, Category10_10
 
-from common import load, mean_bias
+from common import load, mean_bias, sub_bias
 
 DEFAULT_GROUPS = [[0, 0.25], [0.25, 0.75], [0.75, 1]]
 IMAGE_FOLDERS = sorted([p.name for p in Path('.').glob('images_*') if p.is_dir()])
@@ -47,8 +47,8 @@ def _get(key, default):
             elif isinstance(default, int):
                 return int(float(raw))
             return raw
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as e:
+            print(e)
     return default
 
 
@@ -105,7 +105,7 @@ for _folder in IMAGE_FOLDERS:
 # --- Computation ---
 def compute(folder, file_name, clip_level, row_agg_str, func_str, params, col_groups):
     x = images[(folder, file_name)].copy()
-    ns = {'x': x, 'np': np, 'mean_bias': mean_bias, **params}
+    ns = {'x': x, 'np': np, 'mean_bias': mean_bias, 'sub_bias': sub_bias, **params}
     exec(row_agg_str, ns)
     s = ns.get('s')
     exec(func_str, ns)

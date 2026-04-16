@@ -177,7 +177,7 @@ class FixedPWL(_PWLBase):
         C = num_channels
         if separable:
             self.slope_factors = nn.ParameterList([
-                nn.Parameter(torch.zeros(C, len(bp) + 1)) for bp in bp_list
+                nn.Parameter(torch.randn(C, len(bp) + 1) * 0.01) for bp in bp_list
             ])
         else:
             self._slopes = nn.Parameter(torch.zeros((C,) + tuple(len(bp) + 1 for bp in bp_list)))

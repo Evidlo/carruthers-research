@@ -7,9 +7,11 @@ import numpy as np
 
 from common import mean_bias, save
 
-date = '20260111'
+# date and index of image from that day
+# date = '2026[FIXME]'; ind = 3
+date = '20260305'; ind = 3
 
-input_dir = Path('/home/evan/nc/L1A')
+input_dir = Path('/home/evan/mnt/carrdata/products/L1A')
 output_dir = Path(f'images_{date}/')
 
 output_dir.mkdir(exist_ok=True)
@@ -28,10 +30,13 @@ def export(l, mask=None):
         im_l0 (ndarray)
         im_l1a (ndarray)
     """
+    # try to get the desired index, otherwise get the first
+    i = ind if ind < len(l.images) else 0
+
     # --- level 1A ---
     # scale to DN/s
-    im_l1a = l.images[0] / l.t_int[0]
-    path_l1a = (output_dir / f'{l.im_modes[0]}_{l.channel.lower()}').with_suffix('.pkl')
+    im_l1a = l.images[i] / l.t_int[i]
+    path_l1a = (output_dir / f'{l.im_modes[i]}_{l.channel.lower()}').with_suffix('.pkl')
     # save in dictionary because `save` doesn't support masked arrays
     save(path_l1a, np.ma.array(im_l1a, mask=mask))
 
@@ -39,10 +44,10 @@ def export(l, mask=None):
 
     # --- level 0 ---
     # add bias back in
-    im_l0 = l.images[0] + l.bias[0] * l.n_frames[0, None, None]
+    im_l0 = l.images[i] + l.bias[i] * l.n_frames[i, None, None]
     # scale to DN/s
-    im_l0 = im_l0 / l.t_int[0]
-    path_l0 = (output_dir / f'{l.im_modes[0]}_{l.channel.lower()}_l0').with_suffix('.pkl')
+    im_l0 = im_l0 / l.t_int[i]
+    path_l0 = (output_dir / f'{l.im_modes[i]}_{l.channel.lower()}_l0').with_suffix('.pkl')
     # save in dictionary because `save` doesn't support masked arrays
     save(path_l0, np.ma.array(im_l0, mask=mask))
 
@@ -54,7 +59,8 @@ for chan in ('WFI', 'NFI'):
     dark = set(input_dir.glob(f'*{chan}*DRK*{date}*.nc'))
     images = set(input_dir.glob(f'*{chan}*{date}*.nc'))
 
-    assert len(dark) == 1, "There is more than 1 dark!  What do?"
+    print(len(dark))
+    #assert len(dark) == 1, "There is more than 1 dark!  What do?"
     path = list(dark)[0]
     print(path.stem)
     dark_dataset = L1A(xr.open_dataset(path))

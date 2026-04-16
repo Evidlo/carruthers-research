@@ -15,7 +15,7 @@ matplotlib.use('Agg')
 num_columns = 400
 
 img = t.from_numpy(load(path:='images_20260111/oob_nfi_l0.pkl'))
-img = t.from_numpy(load(path:='images_20260101/dark_nfi_l0.pkl'))
+# img = t.from_numpy(load(path:='images_20260101/dark_nfi_l0.pkl'))
 cols = slice(0, num_columns)
 rows = slice(150, 512)
 y = img[rows, cols]
@@ -78,61 +78,39 @@ for _ in (bar:=tqdm(range(2000))):
     p.slopes.data[:, 0] = 0
 
 # %% plot
-def plot_profile(s, y, fit):
-    """Plot PWL fit to data
 
-    Args:
-        s (tensor): row statistic
-        y (tensor): pixel intensity
-        fit (tensor): piecewise linear fit
-    """
+if __name__ == '__main__':
+
+    from plotting import plot_profile
+    fig = plot_profile(s, y, p)
+    fig.savefig('/www/out.png')
+
     plt.close()
-    fig = plt.figure(figsize=(10, 10))
+    means = y.mean(axis=0)
+    import iplot as iplt
+    plt.scatter(p(t.tensor(0)).detach() + means, p.slopes[:, -1].detach())
+    plt.xlabel('offset')
+    plt.ylabel('slope of linear region')
     plt.title(path)
-    s_sweep = t.linspace(s.min(), s.max(), 500)[:, None]
-    for i in range(plots:=min(num_columns, 3)):
-        plt.subplot(plots, 1, i+1)
-        plt.plot(s, y[:, i], 'ro', label='data')
-        plt.plot(s, fit.detach()[:, i], 'bo', markersize=1, label='PWL')
-        for xpos in p.x_positions[0]:
-            plt.axvline(xpos, color='blue')
-        plt.xscale('log')
-        plt.yscale('log')
-        # plt.xlim([0, 0.01])
-        # plt.ylim([0, 0.51])
-    plt.legend()
-    plt.tight_layout()
-    return fig
+    # plt.ylim([-.75, .25])
+    # plt.xlim([0, 1.75])
+    plt.savefig('/www/out2.png')
 
-fig = plot_profile(s, y, p(s))
-fig.savefig('/www/out.png')
-
-plt.close()
-means = y.mean(axis=0)
-plt.scatter(p(0).detach() + means, p.slopes[:, -1].detach())
-# plt.scatter(robbias.squeeze(), p.slopes[:, -1].detach(), color='red')
-plt.xlabel('offset')
-plt.ylabel('slope of linear region')
-plt.title(path)
-# plt.ylim([-.75, .25])
-# plt.xlim([0, 1.75])
-plt.savefig('/www/out2.png')
-
-clip = lambda x: t.clip(x, x.min(), x.min() + 50)
-plt.close()
-plt.figure(figsize=(10, 4))
-plt.subplot(1, 2, 1)
-# plt.imshow(np.clip(img[rows, cols], None, img.min() + 2000))
-plt.imshow(clip(img[rows, cols] - img[rows, cols].mean(axis=0)))
-plt.colorbar()
-plt.subplot(1, 2, 2)
-img_flat = img.clone()
-img_flat[rows, cols] -= denormalize(p(s).detach(), ymin, ymax)
-# plt.imshow(np.clip(img_flat[rows, cols], None, img_flat.min() + 2000))
-plt.imshow(clip(img_flat[rows, cols]))
-plt.colorbar()
-plt.savefig('/www/out3.png', dpi=200)
+    clip = lambda x: t.clip(x, x.min(), x.min() + 50)
+    plt.close()
+    iplt.figure(figsize=(10, 4))
+    iplt.subplot(1, 2, 1)
+    # plt.imshow(np.clip(img[rows, cols], None, img.min() + 2000))
+    iplt.imshow(clip(img[rows, cols] - img[rows, cols].mean(axis=0)))
+    iplt.colorbar()
+    iplt.subplot(1, 2, 2)
+    img_flat = img.clone()
+    img_flat[rows, cols] -= denormalize(p(s).detach(), ymin, ymax)
+    # plt.imshow(np.clip(img_flat[rows, cols], None, img_flat.min() + 2000))
+    iplt.imshow(clip(img_flat[rows, cols]))
+    iplt.colorbar()
+    iplt.savefig('/www/out3.html', dpi=200)
 
 
-fig = plot_profile(s, img[rows, cols], denormalize(p(s), ymin, ymax))
-fig.savefig('/www/out4.png')
+    fig = plot_profile(s, img[rows, cols], denormalize(p(s), ymin, ymax))
+    fig.savefig('/www/out4.png')
