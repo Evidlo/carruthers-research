@@ -10,7 +10,7 @@ from glide.science.plotting import *
 from glide.science.plotting_sph import carderr, cardplot, carderrmin, cardplotaxes
 from glide.science.recon.loss_sph import *
 
-from dominate_tags import *
+from domrep import *
 
 from pathlib import Path
 from sph_raytracer import *
@@ -23,11 +23,10 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 import torch as t
-import inspect
 from itertools import product
 
 
-__file__ = 'recon.py'
+__file__ = 'recon_iterative.py'
 code = open(__file__).read()
 
 device = 'cuda'
@@ -39,43 +38,54 @@ sgrid = DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log')
 rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 
 truth_models = [
-      # Zoennchen24Model(grid=sgrid, device=device),
-      #    Pratik25Model(grid=sgrid, num_times=1, device=device),
-    Pratik25StormModel(grid=sgrid, num_times=1, device=device),
-          # TIMEGCMModel(grid=sgrid, num_times=1, device=device),
-          # TIMEGCMModel(grid=sgrid, num_times=1, device=device, offset=10),
-          #    MSISModel(grid=sgrid, num_times=1, device=device),
+    Zoennchen24Model(grid=sgrid, device=device),
+    # Pratik25Model(grid=sgrid, num_times=1, device=device),
+    # TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
 ]
 
-# L_opts = (0, 1) # sph harm spline order
-L_opts = [0] # sph harm spline order
-c_opts = [16] # sph harm spline control points
-trials = range(10)
+c_opts = [6, 8, 12, 16] # sph harm spline control points
+c_opts = [12] # sph harm spline control points
 recon_models = [
-    SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
-    for L, cpoints, _ in product(L_opts, c_opts, trials)
+    SphHarmSplineModel(rgrid, max_l=3, device=device, cpoints=cpoints, spacing='log')
+    for cpoints in c_opts
 ]
 
 # ----- Measurement Generation -----
 
-t_op = 30
-num_obs=1; duration=14
+t_op = 360
+num_obs=14; duration=14
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
 sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=cams)
 
 f = ForwardSph(
     sc, sgrid=sgrid, # calibrator=cal
     rgrid=rgrid,
+    # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
+    rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
     device=device
 )
 
 # %% recon
 
-saved = {}
-saved['recons'] = []
-saved['rel_err'] = []
+def generator(model, L=1):
+    def unlock_below(locals_):
+        coeffs = locals_['coeffs']
+        it = locals_['it']
+        num_iterations = locals_['num_iterations']
+        # don't lock coefficients below order L to allow them to change
+        # during gradient descent
+        indices = []
 
-with document('Snapshot Retrievals') as doc:
+        L_level = (L + 1) * it // num_iterations
+
+        for i, (l, m) in enumerate(zip(model.l, model.m)):
+            if l != L_level:
+                # lock the coefficient by setting grad to zero
+                coeffs.grad[i].zero_()
+
+    return unlock_below
+
+with document('Two Week Retrievals') as doc:
 
     # iterate ground truths
     for nt, mt in enumerate(truth_models):
@@ -83,8 +93,9 @@ with document('Snapshot Retrievals') as doc:
         print(mt)
         print('=============================================================')
 
+        # FIXME
         truth = mt()
-        saved['truth'] = truth
+        meas = f.calibrate(f.simulate(truth))
 
         truth_figs = []
 
@@ -92,43 +103,50 @@ with document('Snapshot Retrievals') as doc:
         with itemgrid(len(c_opts), flow='row'):
 
             for nr, mr in enumerate(recon_models):
-                desc = f'spline_c{mr.cpoints}_L{mr.max_l}_{num_obs:02d}obs'
+                cshape = 'x'.join(map(str, mr.coeffs_shape))
+                desc = f'spline{cshape}L{mr.max_l}_{num_obs:02d}obs'
                 print('---', desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}', '---')
 
-                meas = f.calibrate(f.simulate(truth))
-                cshape = 'x'.join(map(str, mr.coeffs_shape))
                 t.cuda.empty_cache()
 
                 # ----- Retrieval -----
-
                 # choose loss functions and regularizers with weights
                 loss_fns = [
                     1 * AbsLoss(projection_mask=f.proj_maskb),
                     1e4 * NegRegularizer(),
+                    1e1 * SphHarmL1Regularizer(mr),
                     ReqErr(truth, mt.grid, mr.grid, interval=100),
-                    1e0 * SphHarmL1Regularizer(mr),
                 ]
+
+                from sph_coeffs_history import SphCoeffsHistory
+                coeffs_hist = SphCoeffsHistory(mr)
 
                 # do full reconstruction
                 coeffs, retrieved_meas, losses = gd(
-                    f, meas, mr, lr=5e0,
-                    loss_fns=loss_fns, num_iterations=3000,
+                    f, meas, mr, lr=1e2,
+                    loss_fns=loss_fns, num_iterations=5000,
+                    callbacks=[
+                        generator(mr, L=2),
+                        coeffs_hist.callback
+                    ],
+                    # coeffs=initcoeffs
                 )
 
                 retrieved = mr(coeffs)
 
-                saved['recons'].append(retrieved)
+                t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
 
                 # figure settings
                 figset = {'height': 200}
 
                 if issubclass(type(mr), SphHarmModel):
-                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), height=200)
+                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
                 else:
                     sphharm = ''
+
                 caption(
                     f"recon={mr}",
-                    plot(fig:=carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), height=200),
+                    plot(carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), **figset),
                     sphharm,
                     tags.br(),
                     tags.details(
@@ -138,37 +156,15 @@ with document('Snapshot Retrievals') as doc:
                         caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
                         caption("Recon", plot(cardplotaxes(retrieved.squeeze(), rgrid, yscale='log'), **figset)),
                         caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
+                        caption("Loss History", slider(*map(plot, coeffs_hist.figures)))
                     )
                 )
-                saved['rel_err'].append(fig.locals.rel_err)
 
-    from matplotlib.colors import LogNorm
-    caption(
-        "Mean/Std reconstruction of all trials",
-        plot(cardplot(t.mean(t.stack(saved['recons']), dim=0), mr.grid, norm=LogNorm())),
-        plot(cardplot(t.std(t.stack(saved['recons']), dim=0), mr.grid, norm=LogNorm())),
-    )
-    caption(
-        'Ground truth',
-        plot(cardplot(truth, mt.grid, norm=LogNorm()))
-    )
-    caption(
-        "Mean/Std reconstruction of all trials",
-        plot(cardplotaxes(t.mean(t.stack(saved['recons']), dim=0), mr.grid, yscale='log')),
-        plot(cardplotaxes(t.std(t.stack(saved['recons']), dim=0), mr.grid, yscale='log')),
-    )
-    caption(
-        'Ground truth',
-        plot(cardplotaxes(truth, mt.grid, yscale='log'))
-    )
-
-    tags.code(tags.pre(open('recon_snapshot.py').read()))
-
-import pickle
-pickle.dump({'truth': truth, 'saved':saved}, open('/www/recon_snapshot.pkl', 'wb'))
+    tags.h1("Source Code")
+    tags.code(tags.pre(open('recon.py').read()))
 
 # %% plot
-# f = Path(f'/www/lara/direct_fit.html')
-outfile = Path(f'/www/sph/snapshot_montecarlo_debug.html')
+vgshape = 'x'.join(map(str, f.rvg[0].shape))
+outfile = Path(f'/www/sph/iterative_experiment.html')
 outfile.write_text(doc.render())
 print(f'Saved to {outfile}')
