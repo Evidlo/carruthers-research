@@ -1,0 +1,11 @@
+{
+    "params": {
+        "sigma": 0.0,
+        "beta": 8.516872905064899,
+        "alpha": 3027821.148811812,
+        "sigma_prime": 0.0,
+        "alpha_prime": 3245952.873011801
+    },
+    "cj_file": "final_cj_oob.npy",
+    "description": "Parameters optimized on all OOB NFI L0 images with parallel correspondence (i <-> i+512) and robust bias estimation."
+}
