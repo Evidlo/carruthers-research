@@ -23,7 +23,7 @@ model_module = importlib.import_module(model_name)
 print(f"Using model: {model_name}")
 
 # ---- Load data ----
-img_np = load('../images_20260111/oob_nfi_l0.pkl').astype(np.float64)
+img_np = load('../images_20260117/oob_nfi_l0.pkl').astype(np.float64)
 hot_pixels = np.load('hot_pixels.npy')
 
 img_np[hot_pixels[:, 0], hot_pixels[:, 1]] = np.nan
@@ -44,31 +44,18 @@ row_sums = img.sum(dim=1)
 
 # ---- Configuration ----
 echo_trim = 150  # rows to trim from edges for metrics
-oob_left = slice(0, 400)
-oob_right = slice(750, 1024)
-n_left = 400
+oob_idx = list(range(400)) + list(range(750, 1024))
 
 # Fitting rows: skip echo rows (primary sag only)
 fit_top = slice(echo_trim, 512)
 fit_bot = slice(512, 1024 - echo_trim)
-# Metric rows: same trimmed range
 metric_rows = slice(echo_trim, 1024 - echo_trim)
-
-
-def get_oob(img, rows):
-    return torch.cat([img[rows, oob_left], img[rows, oob_right]], dim=1)
-
-
-def get_bias_oob(bias, half_row):
-    """Get per-column bias for OOB columns from one detector half."""
-    return torch.cat([bias[half_row, oob_left], bias[half_row, oob_right]]).squeeze()
-
 
 # ---- Fit top half ----
 print("=== Fitting top half ===")
 s_top = row_sums[fit_top].unsqueeze(1)
-y_top = get_oob(img, fit_top)
-b_top = get_bias_oob(bias, 0)  # bias is constant per column within a half
+y_top = img[fit_top][:, oob_idx]
+b_top = bias[0, oob_idx]
 
 model_top = model_module.Model(b_top, s_top).to(device)
 loss_top = fit_model(model_top, y_top, b_top, s_top)
@@ -76,28 +63,26 @@ loss_top = fit_model(model_top, y_top, b_top, s_top)
 # ---- Fit bottom half ----
 print("\n=== Fitting bottom half ===")
 s_bot = row_sums[fit_bot].unsqueeze(1)
-y_bot = get_oob(img, fit_bot)
-b_bot = get_bias_oob(bias, 512)
+y_bot = img[fit_bot][:, oob_idx]
+b_bot = bias[512, oob_idx]
 
 model_bot = model_module.Model(b_bot, s_bot).to(device)
 loss_bot = fit_model(model_bot, y_bot, b_bot, s_bot)
 
-# ---- Apply corrections ----
+# ---- Apply corrections (OOB columns only) ----
 img_corrected = img - bias  # baseline everywhere
 
 with torch.no_grad():
     corr_top = model_top(b_top, s_top)
-    img_corrected[fit_top, oob_left] = img[fit_top, oob_left] - corr_top[:, :n_left]
-    img_corrected[fit_top, oob_right] = img[fit_top, oob_right] - corr_top[:, n_left:]
+    img_corrected[fit_top, oob_idx] = img[fit_top][:, oob_idx] - corr_top
 
     corr_bot = model_bot(b_bot, s_bot)
-    img_corrected[fit_bot, oob_left] = img[fit_bot, oob_left] - corr_bot[:, :n_left]
-    img_corrected[fit_bot, oob_right] = img[fit_bot, oob_right] - corr_bot[:, n_left:]
+    img_corrected[fit_bot, oob_idx] = img[fit_bot][:, oob_idx] - corr_bot
 
 
 # ---- Grade card (trimmed to echo_trim:1024-echo_trim) ----
 def grade_card(img, label=""):
-    oob = get_oob(img, metric_rows).cpu().numpy()
+    oob = img[metric_rows][:, oob_idx].cpu().numpy()
     med_row = np.median(oob, axis=1)
     row_flat = np.std(med_row)
     med_col = np.median(oob, axis=0)
@@ -143,7 +128,7 @@ for half_idx, (label, rows, s_fit, b_fit, model) in enumerate([
 
     for j, col_idx in enumerate(sample_cols):
         ax = axes[half_idx * 3 + j]
-        ch = col_idx if col_idx < 400 else col_idx - 750 + n_left
+        ch = oob_idx.index(col_idx)
 
         y_actual = img[rows, col_idx].cpu().numpy()
         y_pred = y_pred_all[:, ch].cpu().numpy()
