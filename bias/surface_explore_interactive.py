@@ -479,10 +479,12 @@ def highlight_pixel(hover_data, col_range):
     State('slider-a', 'value'),
     State('slider-b', 'value'),
     State('plotting', 'value'),
+    State('cols', 'data'),
     prevent_initial_call=True
 )
-def highlight_3d_point(hover_data, a, b, plot_code):
+def highlight_3d_point(hover_data, a, b, plot_code, col_range):
     patched = Patch()
+    patched['layout']['uirevision'] = 'constant'
     if not hover_data:
         patched['data'][0]['x'] = []
         patched['data'][0]['y'] = []
@@ -490,6 +492,11 @@ def highlight_3d_point(hover_data, a, b, plot_code):
         return patched
     col = int(round(hover_data['points'][0]['x']))
     row_abs = int(round(hover_data['points'][0]['y']))
+    if col < col_range[0] or col > col_range[1]:
+        patched['data'][0]['x'] = []
+        patched['data'][0]['y'] = []
+        patched['data'][0]['z'] = []
+        return patched
     x, y, s, img, y2, *_ = compute_plot(a, b, plot_code)
     row_start = namespace['rows'].start or 0
     row_rel = row_abs - row_start
