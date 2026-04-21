@@ -12,7 +12,7 @@ def trimmed_norm(x, keep_ratio=0.9):
     return loss.mean()
 
 
-def fit_model(model, y, b, s, iterations=3000, keep_ratio=0.8, lr=1.0):
+def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.9, lr=1.0):
     """Fit any model that implements the model interface.
 
     Model interface:
@@ -35,6 +35,7 @@ def fit_model(model, y, b, s, iterations=3000, keep_ratio=0.8, lr=1.0):
     """
     model.init_params(y, b, s)
     optim = torch.optim.Adam(model.get_param_groups(s, lr))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=iterations, eta_min=0)
 
     loss_hist = []
     for _ in (bar := tqdm(range(iterations))):
@@ -43,6 +44,7 @@ def fit_model(model, y, b, s, iterations=3000, keep_ratio=0.8, lr=1.0):
         loss = trimmed_norm((y - pred).reshape(-1) ** 2, keep_ratio)
         loss.backward()
         optim.step()
+        scheduler.step()
         model.post_step()
 
         loss_hist.append(float(loss.detach()))

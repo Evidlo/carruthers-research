@@ -23,7 +23,12 @@ model_module = importlib.import_module(model_name)
 print(f"Using model: {model_name}")
 
 # ---- Load data ----
-img_np = load('../images_20260117/oob_nfi_l0.pkl').astype(np.float64)
+# image_path = '../images_20260113/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
+# image_path = '../images_20260115/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
+image_path = '../images_20260117/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
+# image_path = '../images_20260318/star_nfi_l0.pkl'; flat_idx = np.array(list(range(900)))  # known-flat columns for grade card
+# image_path = '../images_20260318/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
+img_np = load(image_path).astype(np.float64)
 hot_pixels = np.load('hot_pixels.npy')
 
 img_np[hot_pixels[:, 0], hot_pixels[:, 1]] = np.nan
@@ -44,29 +49,41 @@ row_sums = img.sum(dim=1)
 
 # ---- Configuration ----
 echo_trim = 150  # rows to trim from edges for metrics
-oob_idx = list(range(400)) + list(range(750, 1024))
+# flatten_idx = Ellipsis  # columns to fit/correct; Ellipsis = all, or list(range(400))+list(range(750,1024))
+flatten_idx =flat_idx
+flatten_idx = np.arange(img_np.shape[1])[flatten_idx]
 
 # Fitting rows: skip echo rows (primary sag only)
 fit_top = slice(echo_trim, 512)
 fit_bot = slice(512, 1024 - echo_trim)
 metric_rows = slice(echo_trim, 1024 - echo_trim)
 
+# ---- Load c_j if available ----
+import os
+def load_cj(half):
+    path = f'cj_{half}.npy'
+    if os.path.exists(path):
+        return torch.from_numpy(np.load(path)).to(device)
+    return torch.zeros(1024, dtype=torch.float64, device=device)
+
 # ---- Fit top half ----
 print("=== Fitting top half ===")
 s_top = row_sums[fit_top].unsqueeze(1)
-y_top = img[fit_top][:, oob_idx]
-b_top = bias[0, oob_idx]
+y_top = img[fit_top][:, flatten_idx]
+b_top = bias[0, flatten_idx]
+c_top = load_cj('top')[flatten_idx]
 
-model_top = model_module.Model(b_top, s_top).to(device)
+model_top = model_module.Model(b_top, s_top, c=c_top).to(device)
 loss_top = fit_model(model_top, y_top, b_top, s_top)
 
 # ---- Fit bottom half ----
 print("\n=== Fitting bottom half ===")
 s_bot = row_sums[fit_bot].unsqueeze(1)
-y_bot = img[fit_bot][:, oob_idx]
-b_bot = bias[512, oob_idx]
+y_bot = img[fit_bot][:, flatten_idx]
+b_bot = bias[512, flatten_idx]
+c_bot = load_cj('bot')[flatten_idx]
 
-model_bot = model_module.Model(b_bot, s_bot).to(device)
+model_bot = model_module.Model(b_bot, s_bot, c=c_bot).to(device)
 loss_bot = fit_model(model_bot, y_bot, b_bot, s_bot)
 
 # ---- Apply corrections (OOB columns only) ----
@@ -74,33 +91,58 @@ img_corrected = img - bias  # baseline everywhere
 
 with torch.no_grad():
     corr_top = model_top(b_top, s_top)
-    img_corrected[fit_top, oob_idx] = img[fit_top][:, oob_idx] - corr_top
+    img_corrected[fit_top, flatten_idx] = img[fit_top][:, flatten_idx] - corr_top
 
     corr_bot = model_bot(b_bot, s_bot)
-    img_corrected[fit_bot, oob_idx] = img[fit_bot][:, oob_idx] - corr_bot
+    img_corrected[fit_bot, flatten_idx] = img[fit_bot][:, flatten_idx] - corr_bot
 
 
-# ---- Grade card (trimmed to echo_trim:1024-echo_trim) ----
+# ---- Save surfaces for debug_interactive ----
+image_tag = image_path.split('/')[-2]
+surface_path = f'surfaces/{model_name}_{image_tag}.npz'
+with torch.no_grad():
+    # Recompute predictions on full OOB for both halves
+    pred_top = model_top(b_top, s_top).cpu().numpy()
+    pred_bot = model_bot(b_bot, s_bot).cpu().numpy()
+np.savez(surface_path,
+         img=img_np,
+         img_corrected=img_corrected.cpu().numpy(),
+         s_top=s_top.cpu().numpy().ravel(),
+         s_bot=s_bot.cpu().numpy().ravel(),
+         pred_top=pred_top,
+         pred_bot=pred_bot,
+         flatten_idx=flatten_idx,
+         fit_top_start=fit_top.start, fit_top_stop=fit_top.stop,
+         fit_bot_start=fit_bot.start, fit_bot_stop=fit_bot.stop,
+)
+print(f"Saved {surface_path}")
+
+# ---- Grade card ----
+# Unsagged rows: 150-362 (top), 662-874 (bot) — relative to full image
+# Pure sag rows: 362-511 (top), 512-662 (bot)
+unsag_rows = list(range(150, 362)) + list(range(662, 874))
+sag_rows = list(range(362, 512)) + list(range(512, 662))
+
 def grade_card(img, label=""):
-    oob = img[metric_rows][:, oob_idx].cpu().numpy()
-    med_row = np.median(oob, axis=1)
-    row_flat = np.std(med_row)
-    med_col = np.median(oob, axis=0)
-    col_flat = np.std(med_col)
+    oob = img[metric_rows][:, flat_idx].cpu().numpy()
+    oob_unsag = img[unsag_rows][:, flat_idx].cpu().numpy()
+    oob_sag = img[sag_rows][:, flat_idx].cpu().numpy()
+
     mid = 512 - echo_trim
     jump = np.abs(np.median(oob[mid - 1]) - np.median(oob[mid]))
 
     print(f"\n{'='*40}")
     print(f"Grade Card: {label}")
-    print(f"  Row Flatness (σ): {row_flat:.3f}  (target: 0.22)")
-    print(f"  Col Flatness (σ): {col_flat:.3f}  (target: 0.26)")
-    print(f"  Half-Half Jump:   {jump:.3f}  (target: < 0.5)")
+    print(f"  Row Flatness unsag (σ): {np.std(np.median(oob_unsag, axis=1)):.3f}  (target: 0.22)")
+    print(f"  Col Flatness unsag (σ): {np.std(np.median(oob_unsag, axis=0)):.3f}  (target: 0.26)")
+    print(f"  Row Flatness sag   (σ): {np.std(np.median(oob_sag, axis=1)):.3f}")
+    print(f"  Col Flatness sag   (σ): {np.std(np.median(oob_sag, axis=0)):.3f}")
+    print(f"  Half-Half Jump:         {jump:.3f}  (target: < 0.5)")
     print(f"{'='*40}")
-    return row_flat, col_flat, jump
 
 
-print("\n--- Before correction (bias subtraction only) ---")
-grade_card(img_bias_sub, "Bias Subtraction")
+# print("\n--- Before correction (bias subtraction only) ---")
+# grade_card(img_bias_sub, "Bias Subtraction")
 
 print(f"\n--- After correction ({model_name}) ---")
 grade_card(img_corrected, model_name)
@@ -128,7 +170,7 @@ for half_idx, (label, rows, s_fit, b_fit, model) in enumerate([
 
     for j, col_idx in enumerate(sample_cols):
         ax = axes[half_idx * 3 + j]
-        ch = oob_idx.index(col_idx)
+        ch = int(np.searchsorted(flatten_idx, col_idx))
 
         y_actual = img[rows, col_idx].cpu().numpy()
         y_pred = y_pred_all[:, ch].cpu().numpy()
