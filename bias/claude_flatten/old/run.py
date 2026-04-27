@@ -23,11 +23,11 @@ model_module = importlib.import_module(model_name)
 print(f"Using model: {model_name}")
 
 # ---- Load data ----
-# image_path = '../images_20260113/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
-# image_path = '../images_20260115/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
-image_path = '../images_20260117/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
-# image_path = '../images_20260318/star_nfi_l0.pkl'; flat_idx = np.array(list(range(900)))  # known-flat columns for grade card
-# image_path = '../images_20260318/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))  # known-flat columns for grade card
+image_path = '../images_20260113/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))
+image_path = '../images_20260115/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))
+# image_path = '../images_20260117/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))
+# image_path = '../images_20260318/star_nfi_l0.pkl'; flat_idx = np.array(list(range(850)))
+image_path = '../images_20260316/oob_nfi_l0.pkl'; flat_idx = np.array(list(range(400)) + list(range(750, 1024)))
 img_np = load(image_path).astype(np.float64)
 hot_pixels = np.load('hot_pixels.npy')
 

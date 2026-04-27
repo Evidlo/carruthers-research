@@ -50,5 +50,5 @@ def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.9, lr=1.0):
         loss_hist.append(float(loss.detach()))
         bar.set_description(f'loss = {float(loss.detach()):.2e}')
 
-    print(f'  loss: {loss_hist[0]:.3e} → {loss_hist[-1]:.3e}')
+    # print(f'  loss: {loss_hist[0]:.3e} → {loss_hist[-1]:.3e}')
     return loss_hist

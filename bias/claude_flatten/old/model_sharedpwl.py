@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Shared-shape PWL primary sag."""
+"""Shared-shape PWL sag model. Primary sag only.
+
+y_ij = (x_ij + b_j) − PWL(s_i) · (x_ij + b_j − c_j)
+
+PWL(s) is a single piecewise linear function of the row sum with shared
+learned slopes. Per-column variation comes from (b_j − c_j) scaling.
+
+For OOB columns where x_ij ≈ 0:
+    y_ij = b_j − PWL(s_i) · (b_j − c_j)
+
+Learned: PWL slopes (~4 scalars)
+Pre-computed: b_j, c_j
+"""
 
 import sys
 sys.path.insert(0, '..')
@@ -22,14 +34,16 @@ class Model(nn.Module):
         s_scale = (s.amax() - s_min).item()
         bp = torch.tensor([.004, .007, .015], dtype=s.dtype, device=s.device) * s_scale + s_min
 
+        # Single-channel PWL: shared sag shape
         self.pwl = FixedPWL(bp, num_channels=1)
+        # Pin bias to 0: no sag at low s
         self.pwl.biases.requires_grad_(False)
 
         self.register_buffer('_b_scale', b.abs().mean().clone())
 
     def forward(self, b, s):
-        b_eff = (b - self.c).unsqueeze(0)          # (1, cols)
-        sag_shape = self.pwl(s)                     # (rows, 1)
+        b_eff = (b - self.c).unsqueeze(0)  # (1, cols)
+        sag_shape = self.pwl(s)  # (rows, 1)
         return b.unsqueeze(0) - sag_shape * b_eff
 
     def init_params(self, y, b, s):
@@ -44,17 +58,3 @@ class Model(nn.Module):
         return [
             {'params': [self.pwl._slopes], 'lr': lr / s_scale / self._b_scale},
         ]
-
-    def to_params(self):
-        return {
-            'pwl_slopes': self.pwl._slopes.detach().cpu().numpy(),
-        }
-
-    @classmethod
-    def from_params(cls, b, s, global_p=None, per_img=None):
-        c = torch.tensor(global_p['cj'], dtype=torch.float32) if global_p else None
-        m = cls(b, s, c=c)
-        if per_img and 'pwl_slopes' in per_img:
-            m.pwl._slopes.data = torch.tensor(per_img['pwl_slopes'], dtype=torch.float32)
-        m.eval()
-        return m

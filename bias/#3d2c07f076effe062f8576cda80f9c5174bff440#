@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+
+from flask import Flask
+from dash import Dash
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+from werkzeug.serving import run_simple
+
+# Initialize the shared Flask server
+server = Flask(__name__)
+
+# Create Dash App 1
+app1 = Dash(__name__, server=server, url_base_pathname='/surface/')
+app1.layout = html.Div("surface explore")
+
+# Create Dash App 2
+# app2 = Dash(__name__, server=server, url_base_pathname='/app2/')
+# app2.layout = html.Div("surface ")
+
+# Dispatch requests based on the URL prefix
+app = DispatcherMiddleware(server, {
+    '/app1': app1.server,
+    '/app2': app2.server,
+})
+
+if __name__ == '__main__':
+    run_simple('localhost', 8889, app)

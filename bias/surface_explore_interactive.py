@@ -43,14 +43,14 @@ s = np.sum(orig, axis=1)[rows]
 
 
 # limits (set with a & b sliders)
-y = np.clip(y, -100, np.percentile(y, a))
-img = np.clip(img, -100, np.percentile(img, a))
-s = np.clip(s, s.min(), np.percentile(s, b))
+y = np.clip(y, -100, np.nanpercentile(y, a))
+img = np.clip(img, -100, np.nanpercentile(img, a))
+s = np.clip(s, np.nanmin(s), np.nanpercentile(s, b))
 
 # row statistic of opposite side
 #x = np.sum(orig, axis=1, keepdims=True).repeat(1024, axis=1)[rows]
-#x = np.clip(x, -100, np.percentile(x, a))
-#y = np.clip(y, -100, np.percentile(y, 95))
+#x = np.clip(x, -100, np.nanpercentile(x, a))
+#y = np.clip(y, -100, np.nanpercentile(y, 95))
 
 # labels
 labelx = 'b'
@@ -66,10 +66,10 @@ s = np.sum(orig, axis=1)[rows]
 
 
 # limits (set with a & b sliders)
-x = np.clip(x, -100, np.percentile(x, a))
-y = np.clip(y, -100, np.percentile(y, 95))
-img = np.clip(img, -100, np.percentile(img, 95))
-s = np.clip(s, s.min(), np.percentile(s, b))
+x = np.clip(x, -100, np.nanpercentile(x, a))
+y = np.clip(y, -100, np.nanpercentile(y, 95))
+img = np.clip(img, -100, np.nanpercentile(img, 95))
+s = np.clip(s, np.nanmin(s), np.nanpercentile(s, b))
 
 # labels
 labelx = 's_opp'

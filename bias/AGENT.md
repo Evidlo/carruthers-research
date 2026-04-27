@@ -26,48 +26,28 @@ from the observed distorted image `y`.
 
 yᵢⱼ = f(xᵢⱼ, bⱼ, sᵢ, s'ᵢ)
 
-yᵢⱼ = (xᵢⱼ + bⱼ) - (σ(xᵢⱼ + bⱼ) sᵢ + β) 1(sᵢ > α) - σ'(xᵢⱼ + bⱼ) s'ᵢ 1(s'ᵢ > α')
+yᵢⱼ = (xᵢⱼ + bⱼ) - P(sᵢ)·(xᵢⱼ + bⱼ - cⱼ) - σ'·(xᵢⱼ + bⱼ - cⱼ)·s'ᵢ·1(s'ᵢ > α')
 
-OR
+Where P(sᵢ) is the primary sag shape (currently modeled as a piecewise-linear function of sᵢ, shared across columns), and `cⱼ` is a per-column offset that has been confirmed to be a stable detector property (cross-image Pearson r ≈ 0.95–0.99).
 
-yᵢⱼ = (xᵢⱼ + bⱼ) - (σ(xᵢⱼ + bⱼ - cⱼ) sᵢ + β) 1(sᵢ > α) - σ'(xᵢⱼ + bⱼ - cⱼ) s'ᵢ 1(s'ᵢ > α')
-
-The model is **not yet confirmed**. 
-
-- `cⱼ` might be constant across images
-
-some hypotheses
-
-- f is piecewise linear in s and linear (or nearly-linear) in s'
+Echo sag is still parametric (σ', α') and has not yet been fit in the current code.
 
 ### Term Breakdown
 
-1. **Signal + bias:** (xᵢⱼ + bⱼ) — baseline pixel with column offset.
-
-2. **Primary sag** (same-side, active when sᵢ > α):
-> -(σ(xᵢⱼ + bⱼ) sᵢ + β) 1(sᵢ > α)
-
-   - σ(xᵢⱼ + bⱼ) sᵢ: pixel-proportional suppression scaling with row sum.
-   - β: fixed additive floor of suppression (active whenever the threshold is exceeded).
-
-3. **Echo sag** (opposite-side, active when s'ᵢ > α'):
-> -σ'(xᵢⱼ + bⱼ) s'ᵢ 1(s'ᵢ > α')
-
-   - Pixel-proportional only; **no floor term**.
+1. **Signal + bias − c_j:** (xᵢⱼ + bⱼ − cⱼ) — baseline pixel with per-column offset.
+2. **Primary sag** (same-side): − P(sᵢ)·(xᵢⱼ + bⱼ − cⱼ), pixel-proportional, shared shape P across columns.
+3. **Echo sag** (opposite-side, active when s'ᵢ > α'): −σ'·(xᵢⱼ + bⱼ − cⱼ)·s'ᵢ, pixel-proportional, no floor term.
 
 ---
 
 ## Unknown Parameters
 
-All five unknowns are **scalar constants** (not position-dependent):
-
-| Parameter | Role                                            |
-|-----------|-------------------------------------------------|
-| σ         | Primary sag gain (pixel-proportional × row sum) |
-| β         | Primary sag floor offset                        |
-| α         | Primary sag activation threshold (on sᵢ)        |
-| σ'        | Echo sag gain                                   |
-| α'        | Echo sag activation threshold (on s'ᵢ)          |
+| Parameter | Role                                                              |
+|-----------|-------------------------------------------------------------------|
+| P(s)      | Primary sag shape vs sᵢ — shared across columns (piecewise linear)|
+| cⱼ        | Per-column offset; treated as a global detector property          |
+| σ'        | Echo sag gain                                                     |
+| α'        | Echo sag activation threshold (on s'ᵢ)                            |
 
 ---
 
@@ -87,7 +67,7 @@ All five unknowns are **scalar constants** (not position-dependent):
 
 Proposed verification approach:
 
-Use `image_20260111/oob_nfi_l0.npy`. This is a 1024x1024 image with earth centered in FOV (centered between the two halves).
+Use `images_20260113/oob_nfi_l0.pkl`. This is a 1024x1024 image with earth centered in FOV (centered between the two halves).
 
 The goal is to reverse the effect of `f` on this image as much as possible.  For validation we can analyze columns with no earth present (cols 0-400 and 750-1024).  This signal should be flat, barring additive noise and stars present.
 
@@ -97,7 +77,7 @@ Some useful facts:
   - rob_bias (robust bias) uses these nonsagged rows to estimate bias
   - making an assumption here that these pixels are yᵢⱼ = f(0 + bⱼ, [small constant sᵢ], [small constant s'ᵢ])
 
-Other images similar to the above are `image_20260115/oob_nfi_l0.npy`, `image_20260117/oob_nfi_l0.npy`, `image_20260119/oob_nfi_l0.npy`.  Only use these for analysis.
+Other images similar to the above live at `images_*/oob_nfi_l0.pkl`. Only use these for analysis.
 
 *DO NOT* edit any existing files in this directory.
 *DO NOT* examine any files in this directory not mentioned here, as not to lead you in wrong directions.

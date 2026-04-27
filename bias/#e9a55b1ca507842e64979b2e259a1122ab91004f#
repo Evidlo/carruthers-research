@@ -11,7 +11,7 @@ from common import mean_bias, save
 # date = '2026[FIXME]'; ind = 3
 # date = '20260305'; ind = 3
 date = '20260317'; ind = 1
-date = '20260318'; ind = 3
+# date = '20260318'; ind = 1
 # date = '20260319'; ind = 0 # contains moon, dont use
 # date = '20260320'; ind = 5 # contains moon, dont use
 
@@ -46,7 +46,7 @@ def export(l, mask=None):
     im_l1a = l.images[i] / l.t_int[i]
     path_l1a = (output_dir / f'{l.im_modes[i]}_{l.channel.lower()}').with_suffix('.pkl')
     # save in dictionary because `save` doesn't support masked arrays
-    save(path_l1a, np.ma.array(im_l1a, mask=mask))
+    save(path_l1a, {'img': np.ma.array(im_l1a, mask=mask), 'date': l.time[i]})
 
     print(f'  → {path_l1a}')
 
@@ -57,7 +57,7 @@ def export(l, mask=None):
     im_l0 = im_l0 / l.t_int[i]
     path_l0 = (output_dir / f'{l.im_modes[i]}_{l.channel.lower()}_l0').with_suffix('.pkl')
     # save in dictionary because `save` doesn't support masked arrays
-    save(path_l0, np.ma.array(im_l0, mask=mask))
+    save(path_l0, {'img': np.ma.array(im_l0, mask=mask), 'date':)
 
     print(f'  → {path_l0}')
 

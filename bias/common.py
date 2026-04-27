@@ -21,7 +21,8 @@ def save(f, arr):
 
 
 def load(f):
-    """Load (masked) arrays from disk
+    """Load arrays from disk. Masked arrays are unwrapped to plain ndarrays
+    with masked entries replaced by NaN.
 
     Args:
         f (str): path to save location
@@ -29,7 +30,7 @@ def load(f):
     Returns:
         ndarray
     """
-    return pickle.load(open(f, 'rb'))
+    return np.ma.filled(pickle.load(open(f, 'rb')), np.nan)
 
 
 def rescale(x, lim=None):
@@ -100,15 +101,15 @@ def rob_bias(x, clip_out=0, clip_in=0, percent=20):
 
     m = x[clip_out:half-clip_in]
     mask = np.logical_and(
-        np.asarray(m) > np.percentile(m, 40, axis=0, keepdims=True),
-        np.asarray(m) < np.percentile(m, 60, axis=0, keepdims=True)
+        m > np.nanpercentile(m, 40, axis=0, keepdims=True),
+        m < np.nanpercentile(m, 60, axis=0, keepdims=True)
     )
     result[:half] = np.ma.array(m, mask=~mask).mean(axis=0)
 
     m = x[half+clip_in:-clip_out or None]
     mask = np.logical_and(
-        np.asarray(m) > np.percentile(m, 40, axis=0, keepdims=True),
-        np.asarray(m) < np.percentile(m, 60, axis=0, keepdims=True)
+        m > np.nanpercentile(m, 40, axis=0, keepdims=True),
+        m < np.nanpercentile(m, 60, axis=0, keepdims=True)
     )
     result[half:] = np.ma.array(m, mask=~mask).mean(axis=0)
 
