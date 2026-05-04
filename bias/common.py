@@ -21,7 +21,7 @@ def save(f, arr):
 
 
 def load(f):
-    """Load arrays from disk. Masked arrays are unwrapped to plain ndarrays
+    """Load arrays in `images_.../` from disk. Masked arrays are unwrapped to plain ndarrays
     with masked entries replaced by NaN.
 
     Args:
@@ -97,20 +97,23 @@ def rob_bias(x, clip_out=0, clip_in=0, percent=20):
     """
     result = np.empty_like(x)
 
-    half = x.shape[0] // 2
+    half = x.shape[-2] // 2
 
-    m = x[clip_out:half-clip_in]
-    mask = np.logical_and(
-        m > np.nanpercentile(m, 40, axis=0, keepdims=True),
-        m < np.nanpercentile(m, 60, axis=0, keepdims=True)
-    )
-    result[:half] = np.ma.array(m, mask=~mask).mean(axis=0)
+    # settings for computing over column
+    c = {'keepdims': True, 'axis': -2}
 
-    m = x[half+clip_in:-clip_out or None]
+    m = x[..., clip_out:half-clip_in, :]
     mask = np.logical_and(
-        m > np.nanpercentile(m, 40, axis=0, keepdims=True),
-        m < np.nanpercentile(m, 60, axis=0, keepdims=True)
+        m > np.nanpercentile(m, 40, **c),
+        m < np.nanpercentile(m, 60, **c)
     )
-    result[half:] = np.ma.array(m, mask=~mask).mean(axis=0)
+    result[..., :half, :] = np.ma.array(m, mask=~mask).mean(**c)
+
+    m = x[..., half+clip_in:-clip_out or None, :]
+    mask = np.logical_and(
+        m > np.nanpercentile(m, 40, **c),
+        m < np.nanpercentile(m, 60, **c)
+    )
+    result[..., half:, :] = np.ma.array(m, mask=~mask).mean(**c)
 
     return result
