@@ -8,7 +8,8 @@ sys.path.insert(0, '..')
 from common import load, rob_bias
 
 # Parameters
-ANNULUS_THICKNESS = 3
+ANNULUS_THICKNESS = 4
+ANNULUS_SPACING = 10
 INNER_RADIUS = 160
 EARTH_CENTER = (512, 512)  # (row, col)
 
@@ -34,8 +35,8 @@ data_s, data_xb, data_z, data_r, data_c, data_ann = [], [], [], [], [], []
 annulus_radii = []
 
 # max_radius = int(dist.max()) + 1
-max_radius = 200
-for ann_idx, r in enumerate(range(INNER_RADIUS, max_radius, ANNULUS_THICKNESS)):
+max_radius = 300
+for ann_idx, r in enumerate(range(INNER_RADIUS, max_radius, ANNULUS_THICKNESS + ANNULUS_SPACING)):
     mask = (dist >= r) & (dist < r + ANNULUS_THICKNESS)
     if not mask.any():
         continue
@@ -52,7 +53,7 @@ for ann_idx, r in enumerate(range(INNER_RADIUS, max_radius, ANNULUS_THICKNESS)):
     row_in_ref = np.zeros(512, dtype=bool)
     row_in_ref[ref_rows] = True
     ref_mask = mask & row_in_ref[:, None]
-    ref_xb = np.nanmean(top_orig[ref_mask]) if ref_mask.any() else np.nan
+    ref_xb = np.nanmedian(top_orig[ref_mask]) if ref_mask.any() else np.nan
 
     # All pixels in annulus
     ann_rows, ann_cols = np.where(mask)
@@ -73,7 +74,7 @@ data_ann = np.array(data_ann)
 # Color palette for annuli
 import plotly.express as px
 n_annuli = len(annulus_radii)
-colors = px.colors.sample_colorscale('Turbo', np.linspace(0, 1, n_annuli))
+colors = px.colors.sample_colorscale('Thermal', np.linspace(0, 1, n_annuli))
 
 # Image for display
 img_display = np.clip(top_orig - top_bias, -10, 10)
@@ -96,16 +97,17 @@ fig.add_trace(
 fig.update_xaxes(scaleanchor='y', scaleratio=1, row=1, col=1)
 fig.update_yaxes(autorange='reversed', row=1, col=1)
 
-# Draw semicircles on heatmap
+# Draw semicircles on heatmap (inner and outer boundaries)
 theta = np.linspace(np.pi, 2*np.pi, 100)  # upper semicircle (rows < 512)
 for i, r in enumerate(annulus_radii):
-    x_arc = EARTH_CENTER[1] + r * np.cos(theta)
-    y_arc = EARTH_CENTER[0] + r * np.sin(theta)
-    fig.add_trace(
-        go.Scatter(x=x_arc, y=y_arc, mode='lines', line=dict(color=colors[i], width=1),
-                   showlegend=False, hoverinfo='skip'),
-        row=1, col=1
-    )
+    for radius in [r, r + ANNULUS_THICKNESS]:
+        x_arc = EARTH_CENTER[1] + radius * np.cos(theta)
+        y_arc = EARTH_CENTER[0] + radius * np.sin(theta)
+        fig.add_trace(
+            go.Scatter(x=x_arc, y=y_arc, mode='lines', line=dict(color=colors[i], width=1),
+                       showlegend=False, hoverinfo='skip'),
+            row=1, col=1
+        )
 
 # Right: 3D scatter by annulus
 for i, r in enumerate(annulus_radii):
