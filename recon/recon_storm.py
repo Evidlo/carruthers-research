@@ -4,11 +4,10 @@
 # constrained by its NFI/WFI pair. Geometry/cameras come from the stored
 # SpaceCraft objects; the L1C images are the measurement (no simulate).
 #
-# Dynamic operator pairing: the operator maps geom i <-> density slice i (one
-# detector per slice). To give each date BOTH cameras, the model emits N slices
-# and a thin forward wrapper tiles them to 2N (interleaved [nfi_i, wfi_i]) before
-# raytracing. Autograd sums the NFI+WFI residual gradients back into date i's
-# density; regularizers still see the clean N-slice density.
+# Dynamic operator pairing: a ZippedGeom groups each date's NFI+WFI cameras onto
+# a new axis, so the operator maps density slice i -> (NFI_i, WFI_i) directly (no
+# tiling). The model emits N slices; autograd sums the NFI+WFI residual gradients
+# back into date i's density; regularizers still see the clean N-slice density.
 
 from glide.science.forward_sph import *
 from glide.science.model_sph import *
@@ -19,6 +18,7 @@ from domrep import *
 
 from pathlib import Path
 
+from tomosphero import ZippedGeom
 from tomosphero.plotting import *
 from tomosphero.retrieval import gd, LogCallback
 from tomosphero.loss import *
@@ -53,48 +53,31 @@ N = len(dates)
 from load import load
 nfi, wfi = load(datapath / 'nfi.zarr', dates), load(datapath / 'wfi.zarr', dates)
 
-# interleave cameras per date: sc/ims order = [nfi_0, wfi_0, nfi_1, wfi_1, ...]
-# so a repeat_interleave(2) tile of the N-slice density lines up: slice i -> 2i,2i+1
+# date-major interleave [nfi_0, wfi_0, nfi_1, wfi_1, ...] for sc/ims — matches
+# rvg.geoms order, so calibrate lines up per image
 sc = [s for pair in zip(nfi.scraft.values, wfi.scraft.values) for s in pair]
-# out-of-FOV pixels are nan; zero them (FOV itself is masked via input_mask)
 ims = [np.nan_to_num(im) for pair in zip(nfi.im.values, wfi.im.values) for im in pair]
 
 # %% forward model
 
 # model grid is 3D — per-date batching comes from a leading N dim on the coeffs
 # (the model's einsum carries arbitrary leading dims). The forward needs a
-# dynamic (4D) grid so its op pairs each of the 2N cameras to a tiled slice.
+# dynamic (N,...) grid so each density slice maps to one date's NFI+WFI pair.
 rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
-rgrid2 = DefaultGrid((2 * N, 200, 45, 60), size_r=(3, 25), spacing='log')
+# same spatial grid + a leading N axis, only to put the operator in dynamic mode
+rgrid_dyn = DefaultGrid((N, *rgrid.shape), size_r=(3, 25), spacing='log')
 
-# mask out-of-FOV pixels (which hold the nans that wreck the loss)
-input_mask = (s.sensor.spec.mask_fov for s in sc)
-
-f = ForwardSph(
-    sc,
-    rgrid=rgrid2,
-    rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
-    input_mask=input_mask,
-    device=device,
+# zip the two cameras onto a new axis: density slice i -> (NFI_i, WFI_i), no tiling.
+# rvg.leaves[0]/[1] are the NFI/WFI collections; rvg.geoms is their flat date-major
+# interleave (matches sc/ims order, so calibrate lines up per image)
+rvg = ZippedGeom(
+    sum([ScienceGeomFast(s, (100, 50)) for s in nfi.scraft.values]),
+    sum([ScienceGeomFast(s, (100, 50)) for s in wfi.scraft.values]),
 )
+
+f = ForwardSph(sc, rgrid=rgrid_dyn, rvg=rvg, device=device)
 f.op.regs = None
 t.cuda.empty_cache()
-
-
-class ForwardTiled:
-    """Wrap a ForwardSph so an N-slice density is tiled to the 2N cameras
-    ([nfi_i, wfi_i]) before raytracing. gd/model/regularizers stay on N slices."""
-    def __init__(self, f):
-        self.f = f
-
-    def __call__(self, x):
-        return self.f(x.repeat_interleave(2, dim=0))
-
-    def __getattr__(self, k):
-        return getattr(self.f, k)
-
-
-ftiled = ForwardTiled(f)
 
 # calibrate() bins the L1C images and converts to the retrieval's native units
 # (atom·Re/cm³). It assumes Rayleigh input (×1e6); our L1C is phot/s/cm²/sr, so
@@ -108,7 +91,7 @@ mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', device=dev
 # Each date is INDEPENDENT — no cross-date regularizer. Stability has to come
 # from the model itself (fewer cpoints) + strong radial smoothness.
 loss_fns = [
-    1 * AbsLoss(projection_mask=f.proj_maskb),
+    1 * AbsLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
     2e4 * DiffLoss(rgrid),            # radial smoothness (was 5e2)
 ]
@@ -118,8 +101,8 @@ open('/tmp/losses_storm.txt', 'w').close()
 initcoeffs = t.zeros((N, *mrinit.coeffs_shape), device=device)
 
 coeffs, retrieved_meas, losses = gd(
-    ftiled, meas, mrinit, lr=5e1,
-    loss_fns=loss_fns, num_iterations=5000,
+    f, meas, mrinit, lr=5e1,
+    loss_fns=loss_fns, num_iterations=1000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],
 )
@@ -158,7 +141,8 @@ with document('Storm 1D Month Retrieval') as doc:
 
         with caption('Radiance (TP alt) vs Density'):
             with slider(labels=labels):
-                items = zip(retrieved, meas[::2], meas[1::2], f.rvg[::2], f.rvg[1::2])
+                items = zip(retrieved, meas[:, 0], meas[:, 1],
+                            rvg.leaves[0].geoms, rvg.leaves[1].geoms)
                 for ret, nmeas, wmeas, nvg, wvg in items:
                     fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
 
@@ -176,12 +160,12 @@ with document('Storm 1D Month Retrieval') as doc:
                     # ax2.semilogy(tprad[:, 0], wmeas.mean(axis=1), label='WFI Radiance')
                     ax2.semilogy(tprad, wmeas, label='WFI Radiance')
 
-                    ax1.set_ylabel("Radiance")
+                    ax1.set_ylabel("NFI Radiance")
                     ax1.set_ylim((10, 12000))
-                    ax1.legend(loc='upper right')
-                    ax2.set_ylabel("Radiance")
+                    # ax1.legend(loc='upper right')
+                    ax2.set_ylabel("WFI Radiance")
                     ax2.set_ylim((10, 12000))
-                    ax2.legend(loc='upper right')
+                    # ax2.legend(loc='upper right')
 
                     # --- Density ---
                     # ax2 = ax1.twinx()
