@@ -12,8 +12,7 @@
 
 from glide.science.forward_sph import *
 from glide.science.model_sph import *
-from glide.science.plotting import *
-from glide.science.plotting_sph import cardplot, cardplotaxes
+from glide.science.plotting_sph import *
 from glide.science.recon.loss_sph import *
 
 from domrep import *
@@ -38,14 +37,17 @@ device = 'cuda'
 
 datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
 
-# start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float); desc = 'march'
-# end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
-# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float); desc = 'january'
+desc = 'march'
+start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+# desc = 'january'
+# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-start = np.datetime64('2026-01-17').astype('datetime64[ns]').astype(float); desc = 'quiet'
-end = np.datetime64('2026-01-18').astype('datetime64[ns]').astype(float)
+# desc = 'quiet'
+# start = np.datetime64('2026-01-15').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-01-18').astype('datetime64[ns]').astype(float)
 
-dates = np.linspace(start, end, num_obs:=5).astype('datetime64[ns]')
+dates = np.linspace(start, end, num_obs:=30).astype('datetime64[ns]')
 N = len(dates)
 
 from load import load
@@ -101,12 +103,14 @@ meas = f.calibrate([im * (4 * np.pi / 1e6) for im in ims], disable_noise=True)
 
 # %% batched 1D fast-init recon (spherically symmetric, max_l=0, per date)
 
-mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=12, spacing='log', device=device)
+mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', device=device)
 
+# Each date is INDEPENDENT — no cross-date regularizer. Stability has to come
+# from the model itself (fewer cpoints) + strong radial smoothness.
 loss_fns = [
     1 * AbsLoss(projection_mask=f.proj_maskb),
     1e5 * NegRegularizer(),
-    5e2 * DiffLoss(rgrid),
+    2e4 * DiffLoss(rgrid),            # radial smoothness (was 5e2)
 ]
 
 open('/tmp/losses_storm.txt', 'w').close()
@@ -114,8 +118,8 @@ open('/tmp/losses_storm.txt', 'w').close()
 initcoeffs = t.zeros((N, *mrinit.coeffs_shape), device=device)
 
 coeffs, retrieved_meas, losses = gd(
-    ftiled, meas, mrinit, lr=1e2,
-    loss_fns=loss_fns, num_iterations=3000,
+    ftiled, meas, mrinit, lr=5e1,
+    loss_fns=loss_fns, num_iterations=5000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],
 )
@@ -128,44 +132,70 @@ labels = [str(d)[:16] for d in dates]
 
 with document('Storm 1D Month Retrieval') as doc:
     tags.h1(f'1D fast-init retrieval, {N} dates {labels[0]} … {labels[-1]}')
+    with itemgrid(length=2):
 
-    figset = {'height': 250}
-    plot(loss_plot(losses), height=200)
-    with caption('Recon (cardinal slices)'):
-        slider(*[plot(cardplot(retrieved[i], rgrid, norm='log'), **figset)
-                 for i in range(N)], labels=labels)
-    with caption('Recon (radial profile)'):
-        slider(*[plot(cardplotaxes(retrieved[i], rgrid, yscale='log'), **figset)
-                 for i in range(N)], labels=labels)
+        figset = {'height': 250}
+        with caption('Recon (cardinal slices)'):
+            slider(*[plot(cardplot(retrieved[i], rgrid, norm='log'), **figset)
+                    for i in range(N)], labels=labels)
+        with caption('Recon (radial profile)'):
+            slider(*[plot(cardplotaxes(retrieved[i], rgrid, yscale='log'), **figset)
+                    for i in range(N)], labels=labels)
 
-    with caption('Radiance (TP alt) vs Density'):
-        with slider(labels=labels):
-            items = zip(retrieved, meas[::2], meas[1::2], f.rvg[::2], f.rvg[1::2])
-            for ret, nmeas, wmeas, nvg, wvg in items:
-                fig, ax1 = plt.subplots()
+        with caption('Diff from t=0 (cardinal slices)'):
+            slider(*[plot(carderr(
+                retrieved[i], retrieved[0],
+                rgrid, rgrid,
+                # norm='log'
+            ), **figset) for i in range(N)], labels=labels)
 
-                # --- NFI ---
-                # plot measurements vs TP radius
-                tprad = t.linalg.norm(tangent_points(nvg.ray_starts, nvg.rays), dim=-1)
-                thind = 0 # theta slice to plot
-                plt.plot(tprad[:, pind], nmeas[:, pind], label='NFI Radiance')
-                # --- WFI ---
-                # plot measurements vs TP radius
-                tprad = t.linalg.norm(tangent_points(wvg.ray_starts, wvg.rays), dim=-1)
-                thind = 0 # theta slice to plot
-                plt.plot(tprad[:, pind], wmeas[:, thind], label='WFI Radiance')
+        with caption('Diff from t=0 (radial profile)'):
+            slider(*[plot(carderraxes(
+                retrieved[i], retrieved[0],
+                rgrid,
+                # yscale='log'
+            ), **figset) for i in range(N)], labels=labels)
 
-                ax1.set_ylim((0, 12000))
+        with caption('Radiance (TP alt) vs Density'):
+            with slider(labels=labels):
+                items = zip(retrieved, meas[::2], meas[1::2], f.rvg[::2], f.rvg[1::2])
+                for ret, nmeas, wmeas, nvg, wvg in items:
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
 
-                # --- Density ---
-                ax2 = ax1.twinx()
-                ax2.plot(rgrid.r, ret[:, 22, 30], 'r', label='Density')
+                    # --- NFI ---
+                    # plot measurements vs TP radius
+                    tprad = t.linalg.norm(tangent_points(nvg.ray_starts, nvg.rays), dim=-1)
+                    # plt.semilogy(tprad[:, 0], nmeas[:, 0], label='NFI Radiance')
+                    # plt.semilogy(tprad[:, 12], nmeas[:, 12], label='NFI Radiance')
+                    ax1.semilogy(tprad, nmeas, label='NFI Radiance')
+                    # --- WFI ---
+                    # plot measurements vs TP radius
+                    tprad = t.linalg.norm(tangent_points(wvg.ray_starts, wvg.rays), dim=-1)
+                    # plt.semilogy(tprad[:, 0], wmeas[:, 0], label='WFI Radiance')
+                    # plt.semilogy(tprad[:, 12], wmeas[:, 12], label='WFI Radiance')
+                    # ax2.semilogy(tprad[:, 0], wmeas.mean(axis=1), label='WFI Radiance')
+                    ax2.semilogy(tprad, wmeas, label='WFI Radiance')
 
-                ax2.set_ylim((0, 1300))
+                    ax1.set_ylabel("Radiance")
+                    ax1.set_ylim((10, 12000))
+                    ax1.legend(loc='upper right')
+                    ax2.set_ylabel("Radiance")
+                    ax2.set_ylim((10, 12000))
+                    ax2.legend(loc='upper right')
 
-                ax1.set_xlabel('Re (TP) / Re')
-                fig.legend()
-                plot(fig)
+                    # --- Density ---
+                    # ax2 = ax1.twinx()
+                    ax3.semilogy(rgrid.r, ret[:, 22, 30], 'r', label='Density')
+
+                    ax3.set_ylabel("Density (atom/cm³)")
+                    ax3.set_ylim((10, 1300))
+
+                    ax3.set_xlabel('Re (TP) / Re')
+                    ax3.legend(loc='upper right')
+
+                    plot(fig)
+
+        plot(loss_plot(losses), **figset)
 
     tags.h1("Source Code")
     tags.code(tags.pre(open('recon_storm.py').read()))
@@ -174,3 +204,8 @@ outfile = Path(f'/www/storm/recon_{desc}.html')
 outfile.parent.mkdir(parents=True, exist_ok=True)
 outfile.write_text(doc.render())
 print(f'Saved to {outfile}')
+
+# also archive the reconstruction
+from datetime import datetime
+outfile = Path(f'/www/sph/archive/{datetime.now().isoformat()}_storm.html')
+outfile.write_text(doc.render())

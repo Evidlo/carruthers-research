@@ -39,8 +39,8 @@ rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 
 truth_models = [
     Zoennchen24Model(grid=sgrid, device=device),
-    Pratik25Model(grid=sgrid, num_times=1, device=device),
-    TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
+    # Pratik25Model(grid=sgrid, num_times=1, device=device),
+    # TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
 ]
 
 L_opts = [3] # sph harm spline order
@@ -57,11 +57,20 @@ num_obs=14; duration=14
 cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
 sc = gen_mission(num_obs=num_obs, duration=duration, start='2025-12-24', cams=cams)
 
+def safe_mask(npix):
+    """Generate mask of sagged rows for image of size npix"""
+    mask = np.full((npix,  npix), True)
+    mask[npix//3:2*npix//3] = False
+    return mask
+
+input_mask = (safe_mask(s.sensor.npix) for s in sc)
+
 f = ForwardSph(
     sc, sgrid=sgrid, # calibrator=cal
     rgrid=rgrid,
     # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
     rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
+    input_mask=input_mask,
     device=device
 )
 
@@ -112,14 +121,14 @@ with document('Two Week Retrievals') as doc:
                 initcoeffs = t.zeros(mr.coeffs_shape, device=device)
 
                 initcoeffs.data[0:1, :], _, _ = gd(
-                    f, meas, mrinit, lr=5e1,
-                    loss_fns=loss_fns, num_iterations=1000,
+                    f, meas, mrinit, lr=1e2,
+                    loss_fns=loss_fns, num_iterations=3000,
                     callbacks=[LogCallback('L0init', '/tmp/losses_baseline.txt')],
                 )
                 # do full reconstruction
                 coeffs, retrieved_meas, losses = gd(
-                    f, meas, mr, lr=5e0,
-                    loss_fns=loss_fns, num_iterations=2000,
+                    f, meas, mr, lr=1e1,
+                    loss_fns=loss_fns, num_iterations=6000,
                     coeffs=initcoeffs,
                     callbacks=[LogCallback('fullL3', '/tmp/losses_baseline.txt')],
                 )
