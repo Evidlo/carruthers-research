@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+
+from glide.common_components.camera import CameraWFI, CameraNFI, CameraL1BWFI, CameraL1BNFI
+from glide.common_components.cam import nadir_wfi_mode, nadir_nfi_mode
+from glide.common_components.generate_view_geom import gen_mission
+from glide.common_components.orbits import circular_orbit
+from glide.science.forward_sph import *
+from glide.science.model_sph import *
+from glide.science.plotting import *
+from glide.science.plotting_sph import carderr, cardplot, carderrmin, cardplotaxes
+from glide.science.recon.loss_sph import *
+
+from pathlib import Path
+from sph_raytracer import *
+from sph_raytracer.plotting import *
+cn = color_negative
+from sph_raytracer.retrieval import *
+from sph_raytracer.loss import *
+from sph_raytracer.model import *
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import torch as t
+import inspect
+
+mailstatus = 'failure'
+
+__file__ = 'recon.py'
+code = open(__file__).read()
+
+device = 'cuda'
+
+# ----- Setup -----
+# %% setup
+
+from itertools import product
+items = product(
+    # 4.033],
+    [14], # num_obs
+    [14], # window (days)
+    ['spring'], # season
+    # [1e2], # difflam
+    [16], # cpoints
+    [360], # integration time
+    [2], # L
+)
+# items = [['spring', 1e-1]]
+
+# for season, difflam, t_op in items:
+# for num_obs, win, season, difflam, t_op, in items:
+for num_obs, win, season, cpoints, t_op, L in items:
+    t.cuda.empty_cache()
+
+    # integrate for full time between each snapshot
+
+    cams = [
+        CameraL1BNFI(nadir_nfi_mode(t_op=t_op)),
+        CameraL1BWFI(nadir_wfi_mode(t_op=t_op))
+    ]
+    scs = gen_mission(num_obs=num_obs, duration=win, start=season, cams=cams); ostr = f'{win}d'
+    # scs = gen_mission(num_obs=num_obs, orbit=circular_orbit, cams=cams); ostr = 'circ'
+
+    # define reconstruction and ground truth grids
+    rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
+    tgrid = DefaultGrid((500, 45, 60), size_r=(3, 15), spacing='log')
+    # m = PratikModel(grid=None, date=season, rlim=(3, 25), device=device); mstr = 'pratik'
+    # m = GonzaloModel(grid=None, device=device); mstr = 'gonzalo'
+    # rgrid = BiResGrid((200, 60, 80), ce=30, ca=30, angle=45, spacing='log')
+    mt = Zoennchen24Model(grid=tgrid, device=device); mstr = 'zoennchen'
+    # m = TIMEGCMModel(grid=rgrid, device=device, offset=np.datetime64(10, 'D')); mstr = 'TIMEGCM'
+    # m = MSISModel(grid=rgrid, device=device, offset=np.datetime64(1, 'D')); mstr = 'MSIS'
+    truth = mt()
+
+    print('----- Measurement Forward Model -----')
+    # svg = None; rvg = None; bstr = 'sci'
+    svg = sum([NativeGeom(sc) for sc in scs])
+    rvg = sum([ScienceGeom(sc, (50, 100), spacing='lin') for sc in scs])
+    # rvg = sum([SubsampledScienceGeom(r, (50, 100)) for r in rvg])
+
+    f = ForwardSph(
+        scs, rgrid, # calibrator=cal
+        svg=svg, rvg=rvg, sgrid=tgrid,
+        use_albedo=True, use_aniso=True, use_noise=True,
+        device=device
+    )
+
+
+    meas = f.noise(truth); noise_type = 'real'
+    # meas = f.noise(truth, noise_engine='alex'); noise_type = 'alex'
+    # meas = f.noise(truth, disable_noise=True); noise_type = 'realdisabled'
+    # meas = f(truth); noise_type = 'noiseless
+    # meas = f.fake_noise(truth); noise_type='fake'
+
+    # del f
+
+    # ----- Retrieval -----
+    #%% recon
+    # mr = FullyDenseModel(m.grid)
+    # choose a model for retrieval
+    # mr = SphHarmModel(default_grid(size_r=m.grid.size.r, shape=(49, 1, 3)), max_l=3, device=device)
+    # mr = SphHarmModel(grid, device=device, max_l=3)
+    print('----- Recon. -----')
+
+    # %% debug
+    mr = SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
+    mr.proj = lambda coeffs: coeffs # FIXME: I think this is unnecessary now
+
+
+    # choose loss functions and regularizers with weights
+    loss_fns = [
+        # 1 * SquareLoss(projection_mask=f.proj_maskb),
+        1 * AbsLoss(projection_mask=f.proj_maskb),
+        # 1e2 * SquareRelLoss(projection_mask=f.proj_maskb),
+        1e4 * NegRegularizer(),
+        # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='sq_diff_log')
+        # differr:=1e-1 * DiffLoss(mr.grid, mode='density', device=device, _reg='gshp_diff_log')
+        # differr:=difflam * DiffLoss(mr.grid, mode='density', device=device, _reg='log_corr_diff')
+    ]
+    # loss_fns = [CheaterLoss(truth)]
+    loss_fns += [req_err := ReqErr(truth, mt.grid, mr.grid, interval=100)]
+
+    # do a fast initialization reconstruction with L=0
+    mrinit = SphHarmSplineModel(mr.grid, max_l=0, device=device, cpoints=cpoints, spacing=mr.spacing)
+    initcoeffs = t.zeros(mr.coeffs_shape, device=device, requires_grad=True)
+    initcoeffs.data[0:1, :], _, _ = gd(
+        f, meas, mrinit, lr=5e0,
+        loss_fns=loss_fns, num_iterations=1000,
+    )
+    # %% debug2
+    # do full reconstruction
+    coeffs, retrieved_meas, losses = gd(
+        f, meas, mr, lr=5e0,
+        loss_fns=loss_fns, num_iterations=20000,
+        coeffs=initcoeffs,
+    )
+
+    # %% debug3
+
+    retrieved = mr(coeffs)
+    # FIXME - ugly, get rid of this eventually
+    # zero out retrieval/truth below 3Re
+    retrieved3 = retrieved.clone().detach()
+    retrieved3[mr.grid.r < 3] = 0
+    truth3 = truth.clone().detach()
+    truth3[mt.grid.r < 3] = 0
+    maxerr = float(req_err(None, None, retrieved3, None))
+
+    # compute measurement errors
+    meas = meas * f.proj_maskb
+    retrieved_meas = retrieved_meas * f.proj_maskb
+    nonzero = meas != 0
+    retrieved_meas_error = t.zeros_like(meas)
+    retrieved_meas_error[nonzero] = (retrieved_meas - meas)[nonzero] / meas[nonzero]
+
+    # desc = f'{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{differr.lam:.0e}_{season}_init_{differr._reg}'
+    cshape = 'x'.join(map(str, mr.coeffs_shape))
+    errtype = type(loss_fns[0]).__name__.lower()
+    # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{{noise_type}}{t_op//60}hr_{season}'
+    # desc = desc.format(noise_type=noise_type)
+    # desc = f'spline{cshape}_{win:02d}d_{num_obs:02d}obs_{errtype}_{noise_type}{t_op//60}hr_{season}'
+    desc = f'spline{cshape}L{mr.max_l}_{ostr}_{num_obs:02d}obs'
+
+    print('-----------------------------')
+    print(desc)
+    print('-----------------------------')
+    t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
+
+    # ----- Plotting -----
+    # %% plot
+    from dech import *
+
+    Img3 = lambda *a, **kw: Img(*a, height=300, *kw)
+
+    # Img3 = lambda *a, **kw: Img(*a, *kw)
+    fig_coeffs = []
+    # show special spherical harmonic coefficient plot if truth/retrieval model is sphharm
+    if issubclass(type(mt), SphHarmModel):
+        fig_coeffs += [Figure("Truth Coeffs", Img(sphharmplot(m.sph_coeffs(coeffs_truth), m), height=300))]
+    if issubclass(type(mr), SphHarmModel):
+        fig_coeffs += [Figure("Recon Coeffs", Img(sphharmplot(mr.sph_coeffs(coeffs), mr), height=300))]
+
+    display_dir = Path('/srv/www/sph')
+    file = display_dir / f'{mstr}_{desc}_refactor.html'
+    p = Page(
+        [
+            [
+                Figure("Relative Err.", Img3(carderr(retrieved3, truth3, mr.grid, mt.grid))),
+                # HTML(' '.join([
+                #     f'{maxerr=}',
+                # ]))
+                Figure("Loss", Img(loss_plot(losses))),
+                HTML(f.op.plot().to_jshtml())
+            ],
+            [
+                Figure("Relative Err. (min. grid)", Img3(carderrmin(retrieved3, mr.grid, mt.__class__))),
+            ] + fig_coeffs,
+            [
+                Figure("Truth", Img(preview3d(cn(truth), mt.grid), animation=True, rescale='sequence')),
+                Figure("Recon", Img(preview3d(cn(retrieved), mr.grid), animation=True, rescale='sequence')),
+            ],
+            [
+                Figure("Density", Img3(cardplot(retrieved3, mr.grid))),
+                Figure("Density", Img3(cardplotaxes(retrieved3, mr.grid))),
+            ],
+            [
+                # Figure("Truth Obs", Img(meas.cpu(), animation=True, format='gif')),
+                # Figure("Recon Obs", Img(retrieved_meas.cpu(), animation=True, format='gif')),
+                # Figure("Percent Err Obs", Img(retrieved_meas_error.cpu(), animation=True, format='gif')),
+                # Figure("Truth Obs", HTML(image_stack(meas.cpu(), fr.vg).to_jshtml())),
+                # Figure("Recon Obs", HTML(image_stack(retrieved_meas.cpu(), fr.vg).to_jshtml())),
+                # Figure("Percent Err Obs", HTML(image_stack(retrieved_meas_error.cpu(), fr.vg).to_jshtml()))
+            ],
+            Code(code),
+            # Code(inspect.getsource(differr.compute))
+        ],
+        css='.animation {height: 300px};'
+    )
+    p.save(file)
+    print(f"Wrote to {file}")
+    plt.close('all')
+
+    from datetime import datetime
+    # archive error plot and all code
+    p.save(display_dir / 'archive' / f'{datetime.now().isoformat()}.html')
+
+mailstatus = 'success'

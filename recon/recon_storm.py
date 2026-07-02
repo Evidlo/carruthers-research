@@ -31,32 +31,32 @@ import matplotlib_torch
 matplotlib_torch.activate()
 import torch as t
 
-device = 'cuda'
+d = {'device': 'cuda'}
 
 # %% load measurements
 
 datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
 
-desc = 'march'
-start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+# desc = 'march'
+# start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
 # desc = 'january'
 # start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-# desc = 'quiet'
-# start = np.datetime64('2026-01-15').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-01-18').astype('datetime64[ns]').astype(float)
+desc = 'quiet'
+start = np.datetime64('2026-01-15').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-01-18').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=30).astype('datetime64[ns]')
 N = len(dates)
 
 from load import load
-nfi, wfi = load(datapath / 'nfi.zarr', dates), load(datapath / 'wfi.zarr', dates)
+nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates)
 
 # date-major interleave [nfi_0, wfi_0, nfi_1, wfi_1, ...] for sc/ims — matches
 # rvg.geoms order, so calibrate lines up per image
 sc = [s for pair in zip(nfi.scraft.values, wfi.scraft.values) for s in pair]
-ims = [np.nan_to_num(im) for pair in zip(nfi.im.values, wfi.im.values) for im in pair]
+ims = [np.nan_to_num(im) for pair in zip(nfi.l1c_ims.values, wfi.l1c_ims.values) for im in pair]
 
 # %% forward model
 
@@ -71,11 +71,11 @@ rgrid_dyn = DefaultGrid((N, *rgrid.shape), size_r=(3, 25), spacing='log')
 # rvg.leaves[0]/[1] are the NFI/WFI collections; rvg.geoms is their flat date-major
 # interleave (matches sc/ims order, so calibrate lines up per image)
 rvg = ZippedGeom(
-    sum([ScienceGeomFast(s, (100, 50)) for s in nfi.scraft.values]),
-    sum([ScienceGeomFast(s, (100, 50)) for s in wfi.scraft.values]),
+    sum([ScienceGeomFast(s, (100, 50), **d) for s in nfi.scraft.values]),
+    sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
 )
 
-f = ForwardSph(sc, rgrid=rgrid_dyn, rvg=rvg, device=device)
+f = ForwardSph(sc, rgrid=rgrid_dyn, rvg=rvg, **d)
 f.op.regs = None
 t.cuda.empty_cache()
 
@@ -86,10 +86,8 @@ meas = f.calibrate([im * (4 * np.pi / 1e6) for im in ims], disable_noise=True)
 
 # %% batched 1D fast-init recon (spherically symmetric, max_l=0, per date)
 
-mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', device=device)
+mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', **d)
 
-# Each date is INDEPENDENT — no cross-date regularizer. Stability has to come
-# from the model itself (fewer cpoints) + strong radial smoothness.
 loss_fns = [
     1 * AbsLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
@@ -98,7 +96,7 @@ loss_fns = [
 
 open('/tmp/losses_storm.txt', 'w').close()
 # leading N dim → model emits (N, r, e, a): one independent reconstruction per date
-initcoeffs = t.zeros((N, *mrinit.coeffs_shape), device=device)
+initcoeffs = t.zeros((N, *mrinit.coeffs_shape), **d)
 
 coeffs, retrieved_meas, losses = gd(
     f, meas, mrinit, lr=5e1,
@@ -144,39 +142,7 @@ with document('Storm 1D Month Retrieval') as doc:
                 items = zip(retrieved, meas[:, 0], meas[:, 1],
                             rvg.leaves[0].geoms, rvg.leaves[1].geoms)
                 for ret, nmeas, wmeas, nvg, wvg in items:
-                    fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
-
-                    # --- NFI ---
-                    # plot measurements vs TP radius
-                    tprad = t.linalg.norm(tangent_points(nvg.ray_starts, nvg.rays), dim=-1)
-                    # plt.semilogy(tprad[:, 0], nmeas[:, 0], label='NFI Radiance')
-                    # plt.semilogy(tprad[:, 12], nmeas[:, 12], label='NFI Radiance')
-                    ax1.semilogy(tprad, nmeas, label='NFI Radiance')
-                    # --- WFI ---
-                    # plot measurements vs TP radius
-                    tprad = t.linalg.norm(tangent_points(wvg.ray_starts, wvg.rays), dim=-1)
-                    # plt.semilogy(tprad[:, 0], wmeas[:, 0], label='WFI Radiance')
-                    # plt.semilogy(tprad[:, 12], wmeas[:, 12], label='WFI Radiance')
-                    # ax2.semilogy(tprad[:, 0], wmeas.mean(axis=1), label='WFI Radiance')
-                    ax2.semilogy(tprad, wmeas, label='WFI Radiance')
-
-                    ax1.set_ylabel("NFI Radiance")
-                    ax1.set_ylim((10, 12000))
-                    # ax1.legend(loc='upper right')
-                    ax2.set_ylabel("WFI Radiance")
-                    ax2.set_ylim((10, 12000))
-                    # ax2.legend(loc='upper right')
-
-                    # --- Density ---
-                    # ax2 = ax1.twinx()
-                    ax3.semilogy(rgrid.r, ret[:, 22, 30], 'r', label='Density')
-
-                    ax3.set_ylabel("Density (atom/cm³)")
-                    ax3.set_ylim((10, 1300))
-
-                    ax3.set_xlabel('Re (TP) / Re')
-                    ax3.legend(loc='upper right')
-
+                    fig = radiance_v_density(ret, rgrid, nmeas, nvg, wmeas, wvg)
                     plot(fig)
 
         plot(loss_plot(losses), **figset)
