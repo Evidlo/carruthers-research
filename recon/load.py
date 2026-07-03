@@ -21,10 +21,11 @@ def load(datapath, channel, dates):
     ).sel(time=dates, method='nearest')
     ds['scraft'] = ('time', get_spacecraft(ds))
 
+    # convert to Rayleighs
     if channel == 'NFI':
-        ds['l1c_ims'] *= 1.111e-5 / 1.257e-5
+        ds['l1c_ims'] *= 1.111e-5
     if channel == 'WFI':
-        ds['l1c_ims'] *= 1.451e-5 / 1.257e-5 / 1.4 # FIXME: cross cal issue
+        ds['l1c_ims'] *= 1.451e-5 / 1.4
 
     return ds
 

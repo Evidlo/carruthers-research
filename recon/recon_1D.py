@@ -32,12 +32,12 @@ d = {'device': 'cuda'}
 
 datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
 
-desc = 'quiet'
-start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
-# desc = 'january'
-# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
+# desc = 'quiet'
+# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
+desc = 'january'
+start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
 # desc = 'march'
 # start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
@@ -68,14 +68,17 @@ rvg = ZippedGeom(
     sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
 )
 
-f = ForwardSph(sc, rgrid=rgrid_dyn, rvg=rvg, **d)
+f = ForwardSph(
+    sc, rgrid=rgrid_dyn, rvg=rvg,
+    # g_factor=g(11e11),
+    **d
+)
 f.op.regs = None
 t.cuda.empty_cache()
 
 # calibrate() bins the L1C images and converts to the retrieval's native units
-# (atom·Re/cm³). It assumes Rayleigh input (×1e6); our L1C is phot/s/cm²/sr, so
-# pre-scale by 4π/1e6 (1e6 cancels the Rayleigh step, 4π takes per-sr→per-[4π sr]).
-meas = f.calibrate([im * (4 * np.pi / 1e6) for im in ims], disable_noise=True)
+# (atom·Re/cm³). It assumes Rayleigh input (×1e6)
+meas = f.calibrate(ims, disable_noise=True)
 mask = f.rmask * meas.isfinite()
 meas = t.nan_to_num(meas) * mask
 
@@ -84,7 +87,8 @@ mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', **d)
 
 loss_fns = [
     # 1 * AbsLoss(mask=f.rmask),
-    1 * SquareLoss(mask=f.rmask),
+    # 1 * SquareLoss(mask=f.rmask),
+    1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
     # 2e4 * DiffLoss(rgrid),            # radial smoothness (was 5e2)
 ]
