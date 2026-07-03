@@ -7,7 +7,7 @@ import xarray as xr
 
 from glide.science_data_processing.L1 import get_spacecraft
 
-def load(datapath, channel, dates):
+def load(datapath, channel, dates, extra_scaling=1):
     """Open per-day L1C NetCDFs for `channel` ('NFI'|'WFI') under `datapath`,
     lazily concatenate along time, select frames nearest `dates`, and build
     SpaceCraft objects from the geometry fields.
@@ -24,8 +24,12 @@ def load(datapath, channel, dates):
     # convert to Rayleighs
     if channel == 'NFI':
         ds['l1c_ims'] *= 1.111e-5
-    if channel == 'WFI':
-        ds['l1c_ims'] *= 1.451e-5 / 1.4
+    elif channel == 'WFI':
+        ds['l1c_ims'] *= 1.451e-5
+    else:
+        raise ValueError(f"Invalid channel {channel}")
+
+    ds['l1c_ims'] *= extra_scaling # FIXME: cross cal isue
 
     return ds
 

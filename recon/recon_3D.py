@@ -64,9 +64,10 @@ f.op.regs = None
 t.cuda.empty_cache()
 
 # calibrate() bins the L1C images and converts to the retrieval's native units
-# (atom·Re/cm³). It assumes Rayleigh input (×1e6); our L1C is phot/s/cm²/sr, so
-# pre-scale by 4π/1e6 (1e6 cancels the Rayleigh step, 4π takes per-sr→per-[4π sr]).
-meas = f.calibrate([im * (4 * np.pi / 1e6) for im in ims], disable_noise=True)
+# (atom·Re/cm³). It assumes Rayleigh input (×1e6)
+meas = f.calibrate(ims, disable_noise=True)
+mask = f.rmask * meas.isfinite()
+meas = t.nan_to_num(meas) * mask
 
 # full reconstruction model
 mr = SphHarmSplineModel(rgrid, max_l=3, cpoints=8, spacing='log', **d)

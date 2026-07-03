@@ -35,18 +35,18 @@ datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
 # desc = 'quiet'
 # start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
-desc = 'january'
-start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-# desc = 'march'
-# start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+# desc = 'january'
+# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
+desc = 'march'
+start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=30).astype('datetime64[ns]')
 N = len(dates)
 
 from load import load
-nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates)
+nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates, 1/1.4)
 
 # date-major interleave [nfi_0, wfi_0, nfi_1, wfi_1, ...] for sc/ims — matches
 # rvg.geoms order, so calibrate lines up per image
@@ -58,9 +58,9 @@ ims = [im for pair in zip(nfi.l1c_ims.values, wfi.l1c_ims.values) for im in pair
 # model grid is 3D — per-date batching comes from a leading N dim on the coeffs
 # (the model's einsum carries arbitrary leading dims). The forward needs a
 # dynamic (N,...) grid so each density slice maps to one date's NFI+WFI pair.
-rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
+rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
 # same spatial grid + a leading N axis, only to put the operator in dynamic mode
-rgrid_dyn = DefaultGrid((N, *rgrid.shape), size_r=(3, 25), spacing='log')
+rgrid_dyn = DefaultGrid((N, *rgrid.shape), size_r=(3, 15), spacing='log')
 
 # zip the two cameras onto a new axis
 rvg = ZippedGeom(
@@ -70,7 +70,7 @@ rvg = ZippedGeom(
 
 f = ForwardSph(
     sc, rgrid=rgrid_dyn, rvg=rvg,
-    # g_factor=g(11e11),
+    g_factor=g(11e11),
     **d
 )
 f.op.regs = None
@@ -79,8 +79,6 @@ t.cuda.empty_cache()
 # calibrate() bins the L1C images and converts to the retrieval's native units
 # (atom·Re/cm³). It assumes Rayleigh input (×1e6)
 meas = f.calibrate(ims, disable_noise=True)
-mask = f.rmask * meas.isfinite()
-meas = t.nan_to_num(meas) * mask
 
 
 mrinit = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', **d)
@@ -98,7 +96,7 @@ open('/tmp/losses_storm.txt', 'w').close()
 initcoeffs = t.zeros((N, *mrinit.coeffs_shape), **d)
 
 coeffs, retrieved_meas, losses = gd(
-    f, meas * f.rmask, mrinit, lr=5e1,
+    f, t.nan_to_num(meas) * f.rmask, mrinit, lr=5e1,
     loss_fns=loss_fns, num_iterations=1000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],
