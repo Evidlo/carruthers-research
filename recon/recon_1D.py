@@ -60,7 +60,10 @@ ims = [im for pair in zip(nfi.l1c_ims.values, wfi.l1c_ims.values) for im in pair
 # dynamic (N,...) grid so each density slice maps to one date's NFI+WFI pair.
 rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
 # same spatial grid + a leading N axis, only to put the operator in dynamic mode
-rgrid_dyn = DefaultGrid((N, *rgrid.shape), size_r=(3, 15), spacing='log')
+rgrid_dyn = DefaultGrid(
+    (N, *rgrid.shape), size_r=(3, 15), spacing='log',
+    t=dates, timeunit='ns',
+)
 
 # zip the two cameras onto a new axis
 rvg = ZippedGeom(
@@ -68,9 +71,14 @@ rvg = ZippedGeom(
     sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
 )
 
+ralbedo=Albedo(
+    xr.open_mfdataset('/home/jackson/glide-sdc/glide/validation/radiative_transfer/pipeline_test/albedo_data_*.nc'),
+    rgrid_dyn, **d
+)
 f = ForwardSph(
     sc, rgrid=rgrid_dyn, rvg=rvg,
     g_factor=g(11e11),
+    ralbedo=ralbedo(),
     **d
 )
 f.op.regs = None
@@ -111,7 +119,7 @@ labels = [str(d)[:16] for d in dates]
 import time
 
 with document('Storm 1D Month Retrieval') as doc:
-    tags.h1(f'1D fast-init retrieval, {N} dates {labels[0]} … {labels[-1]}')
+    tags.h1(f'1D retrieval, {N} dates {labels[0]} … {labels[-1]}')
     with itemgrid(length=2):
 
         s = time.time()
@@ -182,7 +190,7 @@ with document('Storm 1D Month Retrieval') as doc:
     tags.h1("Source Code")
     tags.code(tags.pre(open('recon_1D.py').read()))
 
-outfile = Path(f'/www/storm/recon_{desc}.html')
+outfile = Path(f'/www/storm/1D_{desc}.html')
 outfile.parent.mkdir(parents=True, exist_ok=True)
 outfile.write_text(doc.render())
 print(f'Saved to {outfile}')
