@@ -12,16 +12,17 @@ from sph_raytracer import *
 dev = dict(device='cuda')
 check_mem()
 
-x = t.rand((300, 200, 45, 60), dtype=t.float64, **dev)
+x = t.rand((1, 200, 45, 60), dtype=t.float64, **dev)
 
-check_mem('dataset')
+check_mem('Dataset')
 
-vg = ConeCircGeom((50, 100), (10, 0, 0))
+vg = ConeCircGeom((512, 512), (10, 0, 0))
 grid = SphericalGrid(x.shape[1:])
 
-op = Operator(grid, vg, **dev)
+with Timer(prefix='Operator'):
+    op = Operator(grid, vg, **dev)
 
-check_mem('operator')
+check_mem('Operator')
 
 r, e, a = op.regs
 lens = op.lens
@@ -32,24 +33,33 @@ lens = op.lens
 def batched_lookup(x, r, e, a, lens):
     return (x[..., r, e, a] * lens).sum(dim=-1)
 
-batched_fn = t.vmap(
-    t.vmap(
-        batched_lookup,
-        in_dims=(None, 0, 0, 0, 0),
-        out_dims=1,
-        chunk_size=8
-    ),
+batch_single = t.vmap(
+    batched_lookup,
     in_dims=(None, 0, 0, 0, 0),
     out_dims=1,
-    chunk_size=32
+    chunk_size=16
 )
-with Timer() as tim:
-    # result = batched_fn(x, r, e, a, lens)
-    result = op(x)
-
-check_mem('vmap1')
-print('     shape:', result.shape)
-print('    ', tim, 's')
-print('    ', result.shape)
-print('    ', result.sum())
+batch_double = t.vmap(
+    batch_single,
+    in_dims=(None, 0, 0, 0, 0),
+    out_dims=1,
+    chunk_size=16
+)
 print()
+with Timer(prefix='Unbatched') as tim:
+    result = op(x)
+check_mem('Unbatched')
+print()
+with Timer(prefix='Single') as tim:
+    result = batch_single(x, r, e, a, lens)
+check_mem('Single')
+print()
+with Timer(prefix='Double') as tim:
+    result = batch_double(x, r, e, a, lens)
+check_mem('Double')
+
+# print('     shape:', result.shape)
+# print('    ', tim, 's')
+# print('    ', result.shape)
+# print('    ', result.sum())
+# print()

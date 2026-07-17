@@ -2,6 +2,8 @@
 
 import torch as t
 
+t.cuda.empty_cache()
+
 def check_mem(desc=None):
     """Print additional memory used since last call (peak)"""
     global mem_last
@@ -11,6 +13,25 @@ def check_mem(desc=None):
     if desc is not None:
         print(f'{desc}:', (mem_peak - mem_last) / 1e9, 'GB')
     mem_last = mem_curr
+check_mem()
+
+# ideally integers would be int8, but pytorch requires them to be int64
+int_spec = {'device': 'cuda', 'dtype': t.int64}
+float_spec = {'device': 'cuda', 'dtype': t.float64}
+
+# ----- Input Tensors Setup -----
+# these are all placeholder tensors, but their sizes/dtypes are correct
+
+# number of camera locations to raytrace from
+num_obs = 30
+# dynamic 3D volume being raytraced
+shape = 50
+x = t.rand((num_obs, shape, shape, shape), **float_spec)
+# width of camera
+num_pix = 64
+# maximum number of voxels intersected by a single ray
+num_vox = 2 * (shape + 1) + 2 * (shape + 1) + (shape + 1)
+
 
 def prof_start():
    t.cuda.memory._record_memory_history(

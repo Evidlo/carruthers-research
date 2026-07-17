@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from common import *
+from boilerplate import *
 
 # ----- Flattened Raytracing -----
 

@@ -5,18 +5,20 @@ import torch as t
 t.cuda.empty_cache()
 from contexttimer import Timer
 
-from sph_raytracer import *
+# from sph_raytracer import *
+from tomosphero import *
 
 # spec = {'device':'cuda', 'dtype':t.float}
 # typ =
 dev = dict(device='cuda')
 check_mem()
 
-x = t.rand((300, 200, 45, 60), dtype=t.float64, **dev)
+# x = t.rand((300, 200, 45, 60), dtype=t.float64, **dev)
+x = t.rand((50, 50, 50, 50), dtype=t.float64, **dev)
 
 check_mem('dataset')
 
-vg = ConeCircGeom((50, 100), (10, 0, 0))
+vg = ConeCircGeom((256, 256), (10, 0, 0))
 grid = SphericalGrid(x.shape[1:])
 
 op = Operator(grid, vg, **dev)
@@ -41,7 +43,7 @@ lens = op.lens
 # check_mem()
 
 
-# ----- VMAP -----
+# ----- VMAP1 -----
 
 # Assuming x and lens are PyTorch tensors
 def batched_lookup(r, e, a, x, lens):

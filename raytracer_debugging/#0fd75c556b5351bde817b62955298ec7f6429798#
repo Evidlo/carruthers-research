@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+
+# Computing raytracer inner product with vmap
+# Paying special attention to output return shape, and checking
+# for errors related to `.item()` error when using fancy indexing inside vmap
+
+from memtest.common import *
+import torch as tr
+from contexttimer import Timer
+tr.cuda.empty_cache()
+
+# spec = {'device':'cuda', 'dtype':t.float}
+# typ =
+d = dict(device='cuda')
+check_mem()
+
+N = 256
+
+# ----- Problem Setup -----
+
+# static single-channel ---
+
+gridshape = (50, 50, 50)
+geomshape = (64, 64)
+outshape = (64, 64)
+dynamic = False
+in_dims = (None, None, 0, 0, 0, 0)
+out_dims = 0
+chunk_size = 1
+
+gridshape = (50, 50, 50)
+geomshape = (10, 64, 64)
+outshape = (10, 64, 64)
+dynamic = False
+in_dims = (None, None, 0, 0, 0, 0)
+out_dims = 0
+chunk_size = 1
+
+# static multi-channel ---
+
+gridshape = (10, 50, 50, 50)
+geomshape = (64, 64)
+outshape = (10, 64, 64)
+dynamic = False
+in_dims = (None, None, 0, 0, 0, 0)
+out_dims = 1
+chunk_size = 1
+
+gridshape = (10, 50, 50, 50)
+geomshape = (5, 64, 64)
+outshape = (10, 5, 64, 64)
+dynamic = False
+in_dims = (None, None, 0, 0, 0, 0)
+out_dims = 1
+chunk_size = 1
+
+# FIXME: broken in vmap
+# gridshape = (10, 50, 50, 50)
+# geomshape = []
+# outshape = (10,)
+# dynamic = False
+# in_dims = (None, None, 0, 0, 0, 0)
+# out_dims = 1
+# chunk_size = 1
+
+# dynamic single-channel ---
+
+gridshape = (10, 50, 50, 50)
+geomshape = (10, 64, 64)
+outshape = (10, 64, 64)
+dynamic = True
+in_dims = (None, 0, 0, 0, 0, 0) # x, t, r, e, a, lens
+out_dims = 0
+chunk_size = 1
+
+gridshape = (10, 50, 50, 50)
+geomshape = (64, 64)
+outshape = (10, 64, 64)
+dynamic = True
+in_dims = (None, None, 0, 0, 0, 0) # x, t, r, e, a, lens
+out_dims = 2
+chunk_size = 1
+
+# FIXME: broken in both vmapped and non-vmapped
+# gridshape = (10, 50, 50, 50)
+# geomshape = (10,)
+# outshape = (10,)
+# dynamic = True
+# in_dims = (None, 0, 0, 0, 0, 0) # x, t, r, e, a, lens
+# out_dims = 0
+# chunk_size = 1
+
+# dynamic single-channel ---
+
+# FIXME: doesn't work
+# gridshape = (5, 10, 50, 50, 50)
+# geomshape = (10, 64, 64)
+# outshape = (10, 64, 64)
+# dynamic = True
+# in_dims = (None, 0, 0, 0, 0, 0) # x, t, r, e, a, lens
+# out_dims = 0
+# chunk_size = 1
+
+# ----- Dimension Computation -----
+
+# ndim = len
+# out_dims = 1 if ndim(gridshape) == 4 and not dynamic else 0
+
+# # dont vmap over Ellipsis
+# in_dims = (None, 0, 0, 0, 0, 0) if dynamic else (None, None, 0, 0, 0, 0)
+
+# ----- Compute Arrays -----
+
+x = tr.rand(gridshape, **d)
+check_mem('Density tensor allocated')
+geom = tr.rand((*geomshape, 3), **d)
+check_mem('Viewgeom tensor allocated')
+
+lens = tr.rand(
+    (*geomshape, 2 * (gridshape[-3] + 1) + 2 * (gridshape[-2] + 1) + gridshape[-1] + 2),
+    **d
+)
+check_mem('Lens tensor allocated')
+regs = tr.randint(0, 10, (3, *lens.shape), **d)
+check_mem('Regs tensor allocated')
+
+r, e, a = regs
+check_mem('Regs tensor split')
+if dynamic and x.shape[0] == geom.shape[0]:
+    t = tr.arange(len(x))[:, None, None, None]
+else:
+    t = Ellipsis
+
+
+# ----- Inner Product -----
+
+def _innerprod(x, t, r, e, a, lens):
+    # print('---')
+    # print('x:', x.shape)
+    # print('t:', getattr(t, 'shape', 'Ellipsis'))
+    # print('r:', r.shape)
+    # print('e:', e.shape)
+    # print('a:', a.shape)
+    result = x[t, r, e, a]
+    result *= lens
+    result = result.sum(axis=-1)
+    return result
+
+innerprod = tr.vmap(
+    _innerprod,
+    in_dims=in_dims,
+    out_dims=out_dims,
+    chunk_size=chunk_size
+)
+
+
+print('---------------------------------------------')
+print('grid:', tuple(gridshape))
+print('geom:', geomshape)
+print('dynamic:', dynamic)
+print('---------------------------------------------')
+
+print('in:', in_dims)
+print('out:', out_dims)
+print('x:', x.shape)
+print('t:', getattr(t, 'shape', 'Ellipsis'))
+print('r:', r.shape)
+print('e:', e.shape)
+print('a:', a.shape)
+
+with Timer(prefix='Operator'):
+    result1 = _innerprod(x, t, r, e, a, lens)
+check_mem('Operator')
+
+with Timer(prefix='VMAP Operator'):
+    result2 = innerprod(x, t, r, e, a, lens)
+check_mem('VMAP Operator')
+
+assert result2.shape == outshape, f"Result shape incorrect: {result2.shape}"
+assert tr.all(result1 == result2), "Mismatched VMAP result"
+
+# gridshape = (50, 50, 50, 50)
+# geomshape = (N, N)
+# outshape = (50, N, N)
+# dynamic = False
+# in_dims = (None, None, 0, 0, 0, 0)
+# out_dims = 1
+# chunk_size = 1
+
+# gridshape = (1, 50, 50, 50)
+# geomshape = (N, N)
+# outshape = (1, N, N)
+# dynamic = False
+# in_dims = (None, None, 0, 0, 0, 0)
+# out_dims = 1
+# chunk_size = 1
+
+# gridshape = (50, 50, 50)
+# geomshape = (50, 64, 64)
+# outshape = (50, 64, 64)
+# dynamic = False
+# in_dims = (None, None, 0, 0, 0, 0)
+# out_dims = 1
+# chunk_size = 1
