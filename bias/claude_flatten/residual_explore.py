@@ -32,10 +32,10 @@ IMAGE_LIST = [
     # ('../images_20260115/oob_nfi_l0.pkl', (400, 750)),
     # ('../images_20260117/oob_nfi_l0.pkl', (400, 750)),
     # ('../images_20260119/oob_nfi_l0.pkl', (400, 750)),
-    ('../images_20260316/oob_nfi_l0.pkl', (333, 666)),
-    ('../images_20260317/oob_nfi_l0.pkl', (333, 666)),
-    ('../images_20260318/star_nfi_l0.pkl', (800, 1024)), # off-center
-    ('../images_20260319/oob_nfi_l0.pkl', (333, 666)),
+    ('../images_20260316/oob_nfi_l0.pkl', (200, 800)),
+    ('../images_20260317/oob_nfi_l0.pkl', (200, 800)),
+    # ('../images_20260318/star_nfi_l0.pkl', (800, 1024)), # off-center
+    ('../images_20260319/oob_nfi_l0.pkl', (200, 800)),
 ]
 hot_pixels = np.load('hot_pixels.npy')
 
@@ -62,9 +62,9 @@ def load_and_prep(path):
 
 
 def fit_and_extract(img_np, flat_idx, half='top'):
-    """Fit model, return per-column median residual in sag region."""
+    """Fit model (cj=0). Return model, tensors, and sag-residual stats."""
     img = torch.from_numpy(img_np).to(device)
-    bias = torch.from_numpy(rob_bias(img_np, clip_out=150, clip_in=150)).to(device)
+    bias = torch.from_numpy(rob_bias(img_np, clip_out=150, clip_in=250)).to(device)
     rs = img.sum(dim=1)
 
     fit_slice = fit_slices[half]
@@ -73,7 +73,7 @@ def fit_and_extract(img_np, flat_idx, half='top'):
     b = bias[half_rows[half], flat_idx]
 
     m = model_module.Model(b, s).to(device)
-    fit_model(m, y, b, s)
+    fit_model(m, y, b, s, iterations=2000)
 
     with torch.no_grad():
         pred = m(b, s).cpu().numpy()
@@ -82,13 +82,13 @@ def fit_and_extract(img_np, flat_idx, half='top'):
         sag_residual = np.median((y_np - pred)[sag_sl], axis=0)
         pwl_sag_med = float(m.pwl(s[sag_sl]).mean())
 
-    return sag_residual, pwl_sag_med, y_np - pred
+    return {'m': m, 'b': b, 's': s, 'y': y_np,
+            'residual': sag_residual, 'pwl_med': pwl_sag_med}
 
 
 # ---- Fit all images, both halves ----
 results = {}
 flat_idx_by_name = {}
-flat_image_by_name = {}
 for path, nonflat in IMAGE_LIST:
     name = path.split('/')[-2]
     flat_idx = flat_cols(nonflat)
@@ -96,14 +96,9 @@ for path, nonflat in IMAGE_LIST:
     print(f"\n{'='*50}")
     print(f"Processing {name}")
     img_np = load_and_prep(path)
-    flat_img = np.full((1024, NCOLS), np.nan)
     for half in ['top', 'bot']:
         print(f"  --- {half} half ---")
-        resid, pwl_med, residual_block = fit_and_extract(img_np, flat_idx, half)
-        results[(name, half)] = {'residual': resid, 'pwl_med': pwl_med}
-        rows = np.arange(fit_slices[half].start, fit_slices[half].stop)
-        flat_img[np.ix_(rows, flat_idx)] = residual_block
-    flat_image_by_name[name] = flat_img
+        results[(name, half)] = fit_and_extract(img_np, flat_idx, half)
 
 
 # ---- Plot: cross-image residual correlations ----
@@ -149,18 +144,6 @@ fig.tight_layout()
 fig.savefig(f'{out_dir}/residual.png', dpi=150)
 print(f"\nSaved {out_dir}/residual.png")
 
-# ---- Plot: flattened image per source ----
-fig2, axes2 = plt.subplots(1, n_images, figsize=(5 * n_images, 5), squeeze=False)
-for i, name in enumerate(image_names):
-    ax = axes2[0, i]
-    im = ax.imshow(flat_image_by_name[name], cmap='RdBu_r', vmin=-10, vmax=10)
-    ax.set_title(name)
-    plt.colorbar(im, ax=ax, fraction=0.046)
-fig2.suptitle(f'Flattened residual images — {model_name}', fontsize=14)
-fig2.tight_layout()
-fig2.savefig(f'{out_dir}/residual_images.png', dpi=150)
-print(f"Saved {out_dir}/residual_images.png")
-
 # ---- Print correlation matrix ----
 for half in ['top', 'bot']:
     print(f"\n{half.upper()} half — cross-image residual correlations:")
@@ -173,8 +156,9 @@ for half in ['top', 'bot']:
             r_s, _ = spearmanr(a, b)
             print(f"  {n1} vs {n2}: pearson={r_p:.3f}  spearman={r_s:.3f}")
 
-# ---- Compute and save c_j (1024 columns, zeros for in-band) ----
+# ---- Compute c_j, save, and load into each fitted model ----
 # c_j = sag_residual / median(PWL(s_sag)), averaged across images
+APPLY_CJ = True
 for half in ['top', 'bot']:
     all_cj = []
     for name in image_names:
@@ -187,3 +171,60 @@ for half in ['top', 'bot']:
     cj_avg = np.where(np.isnan(cj_avg), 0.0, cj_avg)
     np.save(f'cj_{half}.npy', cj_avg)
     print(f"\nSaved cj_{half}.npy — mean={cj_avg.mean():.1f}, std={cj_avg.std():.1f}")
+    if APPLY_CJ:
+        for name in image_names:
+            r = results[(name, half)]
+            cj_col = torch.from_numpy(cj_avg[flat_idx_by_name[name]]).to(r['m'].c)
+            r['m'].c.data = cj_col
+
+
+def predict(name, half):
+    r = results[(name, half)]
+    with torch.no_grad():
+        return r['m'](r['b'], r['s']).cpu().numpy()
+
+
+# ---- Plot: flattened image per source ----
+fig2, axes2 = plt.subplots(1, n_images, figsize=(5 * n_images, 5), squeeze=False)
+for i, name in enumerate(image_names):
+    flat_img = np.full((1024, NCOLS), np.nan)
+    flat_idx = flat_idx_by_name[name]
+    for half in ['top', 'bot']:
+        rows = np.arange(fit_slices[half].start, fit_slices[half].stop)
+        flat_img[np.ix_(rows, flat_idx)] = results[(name, half)]['y'] - predict(name, half)
+    ax = axes2[0, i]
+    im = ax.imshow(flat_img, cmap='RdBu_r', vmin=-10, vmax=10)
+    ax.set_title(name)
+    plt.colorbar(im, ax=ax, fraction=0.046)
+fig2.suptitle(f'Flattened residual images — {model_name}', fontsize=14)
+fig2.tight_layout()
+fig2.savefig(f'{out_dir}/residual_images.png', dpi=150)
+print(f"Saved {out_dir}/residual_images.png")
+
+# ---- Plot: y vs predicted for a selected column ----
+SELECTED_COL = 180
+fig3, axes3 = plt.subplots(n_images, 2, figsize=(10, 4 * n_images), squeeze=False)
+for i, name in enumerate(image_names):
+    flat_idx = flat_idx_by_name[name]
+    col_pos = np.where(flat_idx == SELECTED_COL)[0]
+    for j, half in enumerate(['top', 'bot']):
+        ax = axes3[i, j]
+        if len(col_pos) == 0:
+            ax.set_title(f'{name} {half}: col {SELECTED_COL} not in flat_idx')
+            continue
+        idx = col_pos[0]
+        r = results[(name, half)]
+        y_col = r['y'][:, idx]
+        pred_col = predict(name, half)[:, idx]
+        s_col = r['s'].squeeze(1).cpu().numpy()
+        order = np.argsort(s_col)
+        ax.scatter(s_col, y_col, s=3, alpha=0.4, label='y')
+        ax.plot(s_col[order], pred_col[order], 'r-', lw=1.5, label='model')
+        ax.set_xlabel('s (row sum)')
+        ax.set_ylabel('y')
+        ax.set_title(f'{name} {half} col {SELECTED_COL}')
+        ax.legend(fontsize=7)
+fig3.suptitle(f'y vs predicted, col {SELECTED_COL} — {model_name}', fontsize=14)
+fig3.tight_layout()
+fig3.savefig(f'{out_dir}/residual_col.png', dpi=150)
+print(f"Saved {out_dir}/residual_col.png")

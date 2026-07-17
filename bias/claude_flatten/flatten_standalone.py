@@ -21,24 +21,35 @@ import matplotlib.pyplot as plt
 
 from common import load, rob_bias
 from fit import fit_model
+from model_sharedpwl import Model as PWLModel
+
+from model_pwl import Model
 from model_sharedpwl import Model
+# from model_sharedpwlslope import Model
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+suffix = ''
 
 # ---- Config ----
 NCOLS = 1024
 IMAGE_LIST = [
     # (path, (nonflat_start, nonflat_stop)) — nonflat cols are excluded from fit
-    ('../images_20260316/oob_nfi_l0.pkl', (333, 666)),
-    ('../images_20260317/oob_nfi_l0.pkl', (333, 666)),
-    ('../images_20260318/star_nfi_l0.pkl', (800, 1024)), # off-center
-    ('../images_20260319/oob_nfi_l0.pkl', (333, 666)),
+
+    ('../images_20260316/oob_nfi_l0.pkl', (200, 800)),
+    ('../images_20260317/oob_nfi_l0.pkl', (200, 800)),
+    # ('../images_20260318/star_nfi_l0.pkl', (800, 1024)) * bool(suffix:='_off'), # off-center
+    ('../images_20260319/oob_nfi_l0.pkl', (200, 800)),
+
     # ('../images_20260113/oob_nfi_l0.pkl', (333, 666)),
     # ('../images_20260115/oob_nfi_l0.pkl', (333, 666)),
     # ('../images_20260117/oob_nfi_l0.pkl', (333, 666)),
-]
-FLATTEN_INDEX = 0
 
+    # ('../images_20260318_1/star_nfi_l0.pkl', (800, 1024)),
+    # ('../images_20260318_3/star_nfi_l0.pkl', (800, 1024)),
+    # ('../images_20260318_5/star_nfi_l0.pkl', (800, 1024)),
+]
+FLATTEN_INDEX = 1
 
 def flat_cols(nonflat):
     lo, hi = nonflat
@@ -65,23 +76,23 @@ def load_and_prep(path):
 
 def prep_image(path):
     img_np = load_and_prep(path)
-    bias_np = rob_bias(img_np, clip_out=100, clip_in=200)
+    bias_np = rob_bias(img_np, clip_out=150, clip_in=300)
     img_t = torch.from_numpy(img_np).to(device)
     bias_t = torch.from_numpy(bias_np).to(device)
     rs_t = img_t.sum(dim=1)
     return img_np, bias_np, img_t, bias_t, rs_t
 
 
-def fit_half(img_t, bias_t, rs_t, flat_idx, half, c_full=None):
-    """Fit sharedpwl on one half. Returns (model, s, y, b)."""
+def fit_half(img_t, bias_t, rs_t, flat_idx, half, c_full=None, model_cls=PWLModel):
+    """Fit model on one half. Returns (model, s, y, b)."""
     r0, r1 = FIT_ROWS[half]
     s = rs_t[r0:r1].unsqueeze(1)
     y = img_t[r0:r1][:, flat_idx]
     b = bias_t[HALF_ROW[half], flat_idx]
     c = torch.from_numpy(c_full[flat_idx]).to(device) if c_full is not None else None
 
-    m = Model(b, s, c=c).to(device)
-    fit_model(m, y, b, s)
+    m = model_cls(b, s, c=c).to(device)
+    fit_model(m, y, b, s, keep_ratio=.9)
     return m, s, y, b
 
 
@@ -89,7 +100,7 @@ def fit_half(img_t, bias_t, rs_t, flat_idx, half, c_full=None):
 cj_stack = {'top': [], 'bot': []}
 for path, nonflat in IMAGE_LIST:
     flat_idx = flat_cols(nonflat)
-    print(f'\n[pass 1] {path}')
+    print(f'[pass 1] {path}')
     _, _, img_t, bias_t, rs_t = prep_image(path)
     for half in ('top', 'bot'):
         m, s, y, b = fit_half(img_t, bias_t, rs_t, flat_idx, half)
@@ -108,6 +119,7 @@ for h in ('top', 'bot'):
     stacked = np.stack(cj_stack[h])
     with np.errstate(all='ignore'):
         cj_global[h] = np.nanmean(stacked, axis=0)
+        # cj_global[h] = np.nanmean(stacked, axis=0) * 0 * bool(suffix:='_zero')
     print(f'{h}: {int(np.isnan(cj_global[h]).sum())} uncovered columns')
 
 
@@ -118,14 +130,16 @@ print(f'\n[pass 2] flattening {sel_path}')
 img_np, bias_np, img_t, bias_t, rs_t = prep_image(sel_path)
 
 img_flat = img_np - bias_np
+fit = np.full(img_np.shape, np.nan, dtype=np.float32)
 for half in ('top', 'bot'):
-    m, s, y, b = fit_half(img_t, bias_t, rs_t, sel_flat, half, c_full=cj_global[half])
+    m, s, y, b = fit_half(img_t, bias_t, rs_t, sel_flat, half, c_full=cj_global[half], model_cls=Model)
     with torch.no_grad():
         pred = m(b, s).cpu().numpy()
     resid = y.cpu().numpy() - pred
     r0, r1 = FIT_ROWS[half]
     rows = np.arange(r0, r1)
     img_flat[np.ix_(rows, sel_flat)] = resid
+    fit[np.ix_(rows, sel_flat)] = pred.astype(np.float32)
 
 
 # ---- Grade card ----
@@ -150,6 +164,22 @@ print(f'  Half-Half Jump:         {jump:.3f}  (target: < 0.5)')
 print('=' * 40)
 
 
+# ---- Save fit ----
+sel_date = Path(sel_path).parent.name.split('_')[-1]
+out_npz = Path('fits') / f'{sel_date}_{Model.__module__}{suffix}.npz'
+Path('fits').mkdir(exist_ok=True)
+np.savez(out_npz,
+    actual=img_np.astype(np.float32),
+    fit=fit,
+    s=rs_t.cpu().numpy().astype(np.float32),
+    sel_flat=sel_flat,
+    fit_top_start=FIT_ROWS['top'][0],
+    fit_top_stop=FIT_ROWS['top'][1],
+    fit_bot_start=FIT_ROWS['bot'][0],
+    fit_bot_stop=FIT_ROWS['bot'][1],
+)
+print(f'\nSaved {out_npz}')
+
 # ---- Plot ----
 fig, ax = plt.subplots(figsize=(10, 10))
 im = ax.imshow(img_flat, cmap='RdBu_r', vmin=-10, vmax=10)
@@ -158,4 +188,4 @@ ax.set_title(f'Flattened error: {label}')
 out_png = '/www/flattened.png'
 Path(out_png).parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(out_png, dpi=100, bbox_inches='tight')
-print(f'\nSaved {out_png}')
+print(f'Saved {out_png}')

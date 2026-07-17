@@ -28,7 +28,8 @@ HOT_PIXELS = np.load(Path(__file__).parent / 'hot_pixels.npy')
 # Images used for global c_j fit
 IMAGE_LIST = [
     ('../images_20260316/oob_nfi_l0.pkl', np.array(list(range(333)) + list(range(666, 1024)))),
-    ('../images_20260318/oob_nfi_l0.pkl', np.array(list(range(333)) + list(range(666, 1024)))),
+    ('../images_20260317/oob_nfi_l0.pkl', np.array(list(range(333)) + list(range(666, 1024)))),
+    # ('../images_20260318/oob_nfi_l0.pkl', np.array(list(range(333)) + list(range(666, 1024)))),
     ('../images_20260319/oob_nfi_l0.pkl', np.array(list(range(333)) + list(range(666, 1024)))),
     # ('../images_20260113/oob_nfi_l0.pkl', np.array(list(range(400)) + list(range(750, 1024)))),
     # ('../images_20260115/oob_nfi_l0.pkl', np.array(list(range(400)) + list(range(750, 1024)))),
@@ -66,7 +67,7 @@ for img_path, flat_idx in IMAGE_LIST:
     print(f'\n[{image_tag(img_path)}]: estimating c_j ...')
     img_np = load_and_prep(img_path)
     img = torch.from_numpy(img_np).to(device)
-    bias = torch.from_numpy(rob_bias(img_np, clip_out=150, clip_in=150)).to(device)
+    bias = torch.from_numpy(rob_bias(img_np, clip_out=150, clip_in=300)).to(device)
     rs = img.sum(dim=1)
 
     for half in ['top', 'bot']:

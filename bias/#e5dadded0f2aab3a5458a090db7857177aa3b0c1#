@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-A CMOS detector with two halves exhibits directional readout crosstalk. Pixel values are
+A CMOS detector with two halves exhibits directional readout crosstalk and di Pixel values are
 distorted by aggregate row statistics from both the same detector half (primary sag) and the
 corresponding row in the opposite half (echo sag). The goal is to recover the true image `x`
 from the observed distorted image `y`.
@@ -14,8 +14,8 @@ from the observed distorted image `y`.
 | Symbol | Description                                                            |
 |--------|------------------------------------------------------------------------|
 | i, j   | Row and column indices                                                 |
-| xᵢⱼ    | True (undistorted) pixel value (L1A signal)                            |
-| yᵢⱼ    | Observed (distorted) pixel value (L0 signal)                           |
+| xᵢⱼ    | True (undistorted) pixel value                                         |
+| yᵢⱼ    | Observed (distorted) pixel value                                       |
 | bⱼ     | Per-column bias / dark-current offset (known or estimated separately)  |
 | sᵢ     | Row sum of the **same-side** detector half for row i                   |
 | s'ᵢ    | Row sum of the **corresponding row** in the **opposite** detector half |

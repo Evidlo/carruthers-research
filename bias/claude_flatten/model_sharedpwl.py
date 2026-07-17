@@ -20,9 +20,12 @@ class Model(nn.Module):
 
         s_min = s.amin()
         s_scale = (s.amax() - s_min).item()
-        bp = torch.tensor([.004, .007, .015], dtype=s.dtype, device=s.device) * s_scale + s_min
+        # self.bp = [.004, .007, .020]
+        # self.bp = [.020, .021]
+        self.bp = [.012, .017]
 
-        self.pwl = FixedPWL(bp, num_channels=1)
+        _bp = torch.tensor(self.bp, dtype=s.dtype, device=s.device) * s_scale + s_min
+        self.pwl = FixedPWL(_bp, num_channels=1)
         self.pwl.biases.requires_grad_(False)
 
         self.register_buffer('_b_scale', b.abs().mean().clone())

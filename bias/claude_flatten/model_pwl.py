@@ -20,8 +20,10 @@ class Model(nn.Module):
         num_channels = b.shape[0]
         s_min = s.amin()
         scale = (s.amax() - s_min).item()
-        bp = torch.tensor([.004, .007, .015], dtype=s.dtype, device=s.device) * scale + s_min
-        self.primary = FixedPWL(bp, num_channels)
+        self.bp = [.012, .017]
+        # bp = torch.tensor([.004, .007, .015], dtype=s.dtype, device=s.device) * scale + s_min
+        _bp = torch.tensor(self.bp, dtype=s.dtype, device=s.device) * scale + s_min
+        self.primary = FixedPWL(_bp, num_channels)
 
     def forward(self, b, s):
         return self.primary(s)
@@ -55,3 +57,7 @@ class Model(nn.Module):
             m.primary.biases.data = torch.tensor(per_img['biases'], dtype=torch.float32)
         m.eval()
         return m
+
+
+    def __repr__(self):
+        return f'{self.__name__}(bp={self.bp})'

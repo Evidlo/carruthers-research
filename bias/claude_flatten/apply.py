@@ -18,7 +18,7 @@ from fit import fit_model
 from registry import MODELS
 
 ECHO_TRIM = 150
-OOB_FLAT_IDX = np.array(list(range(400)) + list(range(750, 1024)))
+OOB_FLAT_IDX = np.array(list(range(300)) + list(range(800, 1024)))
 HOT_PIXELS = np.load(Path(__file__).parent / 'hot_pixels.npy')
 FIT_ROWS = {'top': (ECHO_TRIM, 512), 'bot': (512, 1024 - ECHO_TRIM)}
 HALF_ROW = {'top': 0, 'bot': 512}

@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+# Surface plots comparing residuals with/without column-wise effect
+# Evan Widloski 2026-05-26
+
+import numpy as np
+from domrep import *
+from dominate.tags import pre
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+import xarray as xr
+from glide.science_data_processing.L1A import L1A
+from glide.common_components.camera import CameraL1BNFI
+from bias_wavelet import remove_dark_stripes
+from common import load, rob_bias
+
+mask = CameraL1BNFI().spec.mask_fov
+
+# ----- Load training data: 1215 flat images (varying filters, no earth) -----
+dataset1 = L1A(xr.open_dataset('/data/L1A/CARRUTHERS_GCI-NFI_L1A-STR_20251215_v1.0.nc')).data
+dataset1 = dataset1.isel(time=[15, 16, 18, 24, 25])
+dataset2 = L1A(xr.open_dataset('/data/L1A/CARRUTHERS_GCI-NFI_L1A-DRK_20251215_v1.0.nc')).data
+dataset2 = dataset2.isel(time=[0])
+dataset_train = xr.concat([dataset1, dataset2], dim='time')
+dataset_train['images'] = dataset_train.images.where(xr.DataArray(mask, dims=['row', 'col']), np.nan)
+dataset_train['images_norm'] = dataset_train.images / dataset_train.n_frames
+dataset_train['images_nodark'] = remove_dark_stripes(dataset_train.images_norm, 'NFI')[0]
+
+# Compute per-column bias for each image (using safe rows)
+b_j_all = rob_bias(dataset_train.images_nodark.values, 300, 0)  # (n_images, 1024, 1024)
+# Background level per image per half
+bkg_top = np.nanmedian(dataset_train.images_nodark.values[:, 150:362, :], axis=(1, 2))  # (n_images,)
+bkg_bot = np.nanmedian(dataset_train.images_nodark.values[:, 662:874, :], axis=(1, 2))
+
+# Fit γ_j, δ_j per column: b_j = γ_j * bkg + δ_j
+n_images = b_j_all.shape[0]
+gamma = np.zeros(1024)
+delta = np.zeros(1024)
+
+for j in range(1024):
+    b_col = b_j_all[:, 0, j]  # bias at row 0 (top half) for each image
+    valid = ~np.isnan(b_col) & ~np.isnan(bkg_top)
+    if valid.sum() > 2:
+        A = np.column_stack([bkg_top[valid], np.ones(valid.sum())])
+        coeffs, *_ = np.linalg.lstsq(A, b_col[valid], rcond=None)
+        gamma[j], delta[j] = coeffs
+
+# ----- Load test image: 1221 SCI -----
+dataset_test = L1A(xr.open_dataset('/data/L1A/CARRUTHERS_GCI-NFI_L1A-SCI_20251221_v1.0.nc')).data
+dataset_test = dataset_test.isel(time=0)
+dataset_test['images'] = dataset_test.images.where(xr.DataArray(mask, dims=['row', 'col']), np.nan)
+orig = (dataset_test.images / dataset_test.n_frames).values
+orig = remove_dark_stripes(orig[None], 'NFI')[0][0]  # expects batch dim
+# bias = rob_bias(orig, 150, 150)
+
+# Compute background for this image
+bkg_test_top = np.nanmedian(orig[150:362, :])
+bkg_test_bot = np.nanmedian(orig[662:874, :])
+
+# Correct bias using fitted column-wise model
+# bias_corrected = γ * bkg + δ
+bias_corrected = np.zeros_like(orig)
+bias_corrected[:512, :] = gamma * bkg_test_top + delta
+bias_corrected[512:, :] = gamma * bkg_test_bot + delta
+
+vlim = {'vmin': -50, 'vmax': 50}
+
+# ----- Report -----
+with document('Column-wise Effect', style='flex-direction: row;') as doc:
+    with itemgrid(flow='row', length=2):
+
+        with caption('0316 OOB image: before/after column-wise correction'):
+            with slider():
+                with plot(label='Before'):
+                    plt.imshow(orig, **vlim, cmap='RdBu_r')
+                    plt.colorbar(label='DN/frame')
+                    plt.title('orig')
+                with plot(label='After (column-wise)'):
+                    plt.imshow(orig - bias_corrected, **vlim, cmap='RdBu_r')
+                    plt.colorbar(label='DN/frame')
+                    plt.title('orig - bias_corrected')
+                with plot(label='Difference'):
+                    plt.imshow((orig) - (orig - bias_corrected), **vlim, cmap='RdBu_r')
+                    plt.colorbar(label='DN/frame')
+                    plt.title('Correction difference')
+
+        with caption('Fitted column parameters (from 1221 SCI data)'):
+            with slider():
+                with plot(label='γ_j (slope)'):
+                    plt.plot(gamma)
+                    plt.xlabel('Column')
+                    plt.ylabel('γ_j')
+                    plt.title('Per-column slope (db/dbkg)')
+                with plot(label='δ_j (offset)'):
+                    plt.plot(delta)
+                    plt.xlabel('Column')
+                    plt.ylabel('δ_j')
+                    plt.title('Per-column offset')
+
+        pre(open(__file__, 'r').read())
+
+doc.save(f:='/www/colwise.html')
+print(f'Wrote {f}')

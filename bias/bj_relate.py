@@ -71,8 +71,15 @@ dtest['images_nodark'] = remove_dark_stripes(dtest.images_norm, 'NFI')[0]
 # Apply per-half correction: slope_j/offset_j are (2, 1024), broadcast to (1024, 1024)
 slope_img = np.concatenate([np.broadcast_to(slope_j[0], (512, 1024)), np.broadcast_to(slope_j[1], (512, 1024))], axis=0)
 offset_img = np.concatenate([np.broadcast_to(offset_j[0], (512, 1024)), np.broadcast_to(offset_j[1], (512, 1024))], axis=0)
-# dtest['images_nocol'] = (dtest.images_nodark - offset_img) / (1 + slope_img)
-dtest['images_nocol'] = dtest.images_nodark - (slope_img * dtest.images_nodark - offset_img)
+
+# apply the model, using xxx
+# xxx = dtest.images_nodark # x_ij
+xxx = np.repeat(dtest.images_nodark.mean(axis=-1, keepdims=True), 1024, axis=-1) # s_i
+# xxx = np.stack(( # xbar (mean bkg) (FIXME: this is wrong for LyaN since not flat)
+#     np.nanmedian(dtest.images_nodark[:, :512], axis=(1, 2)),
+#     np.nanmedian(dtest.images_nodark[:, 512:], axis=(1, 2)),
+# ), axis=1)[:, :, None].repeat(512, axis=1).repeat(1024, axis=2)
+dtest['images_nocol'] = dtest.images_nodark - (slope_img * xxx - offset_img)
 
 # plot bounding box
 e = (slice(462, 562), slice(0, 100))
@@ -81,6 +88,7 @@ ex = (e[1].start, e[1].stop, e[0].start, e[0].stop)
 # ----- Plotting -----
 # %% plot
 
+clim = (-25, 25)
 with document('b_j analysis', style='flex-direction: row;') as doc:
     with itemgrid(flow='row', length=3):
         with caption("Input images (norm. DN/frame)"):
@@ -91,7 +99,7 @@ with document('b_j analysis', style='flex-direction: row;') as doc:
                             plt.imshow(row.images_norm.squeeze())
                             plt.colorbar()
                             plt.tight_layout()
-                            plt.clim((-10, 10))
+                            plt.clim(clim)
                 with slider(label='Whole'):
                     for t, row in dtest.groupby('time'):
                         with plot(label=f'{row.filter.values[0]} ({t})'):
@@ -107,7 +115,7 @@ with document('b_j analysis', style='flex-direction: row;') as doc:
                             plt.imshow(row.images_nodark.squeeze())
                             plt.colorbar()
                             plt.tight_layout()
-                            plt.clim((-10, 10))
+                            plt.clim(clim)
                 with slider(label='Whole'):
                     for t, row in dtest.groupby('time'):
                         with plot(label=f'{row.filter.values[0]} ({t})'):
@@ -123,7 +131,7 @@ with document('b_j analysis', style='flex-direction: row;') as doc:
                             plt.imshow(row.images_nocol.squeeze())
                             plt.colorbar()
                             plt.tight_layout()
-                            plt.clim((-10, 10))
+                            plt.clim(clim)
                 with slider(label='Whole'):
                     for t, row in dtest.groupby('time'):
                         with plot(label=f'{row.filter.values[0]} ({t})'):

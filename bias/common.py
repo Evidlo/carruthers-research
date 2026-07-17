@@ -20,17 +20,25 @@ def save(f, arr):
     pickle.dump(arr, open(f, 'wb'))
 
 
-def load(f):
+def load(f, mask='nan'):
     """Load arrays in `images_.../` from disk. Masked arrays are unwrapped to plain ndarrays
     with masked entries replaced by NaN.
 
     Args:
         f (str): path to save location
+        mask (bool, str): return masked array if True, original data if False
+            nan-masked data if 'nan'
 
     Returns:
         ndarray
     """
-    return np.ma.filled(pickle.load(open(f, 'rb')), np.nan)
+    x = pickle.load(open(f, 'rb'))
+    if mask == 'nan':
+        return np.ma.filled(x, np.nan)
+    elif mask == True:
+        return x
+    else:
+        return x.data
 
 
 def rescale(x, lim=None):

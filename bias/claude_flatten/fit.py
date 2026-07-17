@@ -12,7 +12,7 @@ def trimmed_norm(x, keep_ratio=0.9):
     return loss.mean()
 
 
-def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.9, lr=1.0):
+def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.8, lr=1.0):
     """Fit any model that implements the model interface.
 
     Model interface:
@@ -38,7 +38,9 @@ def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.9, lr=1.0):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=iterations, eta_min=0)
 
     loss_hist = []
-    for _ in (bar := tqdm(range(iterations))):
+    best_loss = float('inf')
+    best_step = 0
+    for step in (bar := tqdm(range(iterations))):
         optim.zero_grad()
         pred = model(b, s)
         loss = trimmed_norm((y - pred).reshape(-1) ** 2, keep_ratio)
@@ -47,8 +49,14 @@ def fit_model(model, y, b, s, iterations=8000, keep_ratio=0.9, lr=1.0):
         scheduler.step()
         model.post_step()
 
-        loss_hist.append(float(loss.detach()))
-        bar.set_description(f'loss = {float(loss.detach()):.2e}')
+        lv = float(loss.detach())
+        loss_hist.append(lv)
+        bar.set_description(f'loss = {lv:.2e}')
 
-    # print(f'  loss: {loss_hist[0]:.3e} → {loss_hist[-1]:.3e}')
+        if lv < best_loss * 0.9999:
+            best_loss = lv
+            best_step = step
+        elif step - best_step >= 500:
+            break
+
     return loss_hist

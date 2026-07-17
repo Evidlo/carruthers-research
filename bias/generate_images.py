@@ -11,12 +11,12 @@ from common import mean_bias, save
 # date = '2026[FIXME]'; ind = 3
 # date = '20260305'; ind = 3
 date = '20260317'; ind = 1
-date = '20260318'; ind = 3
+date = '20260318'; ind = 5
 # date = '20260319'; ind = 0 # contains moon, dont use
 # date = '20260320'; ind = 5 # contains moon, dont use
 
-input_dir = Path('/home/evan/mnt/carrdata/products/L1A')
-output_dir = Path(f'images_{date}/')
+input_dir = Path('/data/L1A')
+output_dir = Path(f'images_{date}_{ind}/')
 
 output_dir.mkdir(exist_ok=True)
 
@@ -63,26 +63,27 @@ def export(l, mask=None):
 
     return im_l0, im_l1a
 
-# FIXME
-# for chan in ('WFI', 'NFI'):
-for chan in ('NFI',):
-    dark = set(input_dir.glob(f'*{chan}*DRK*{date}*.nc'))
-    images = set(input_dir.glob(f'*{chan}*{date}*.nc'))
+if __name__ == '__main__':
+    # FIXME
+    # for chan in ('WFI', 'NFI'):
+    for chan in ('NFI',):
+        dark = set(input_dir.glob(f'*{chan}*DRK*{date}*.nc'))
+        images = set(input_dir.glob(f'*{chan}*{date}*.nc'))
 
-    #assert len(dark) == 1, "There is more than 1 dark!  What do?"
-    path = list(dark)[0]
-    print(path.stem)
-    dark_dataset = L1A(xr.open_dataset(path))
-    dark_l0, dark_l1a = export(dark_dataset)
-    # find hot pixel mask
-    hotmask = (dark_l0 - mean_bias(dark_l0)) > 20
-
-    # iterate over all non-dark images
-    for path in images - dark:
-        # FIXME - skip all nonoob images
-        # if 'STR' not in str(path):
-        #     continue
+        #assert len(dark) == 1, "There is more than 1 dark!  What do?"
+        path = list(dark)[0]
         print(path.stem)
-        dataset = L1A(xr.open_dataset(path))
+        dark_dataset = L1A(xr.open_dataset(path))
+        dark_l0, dark_l1a = export(dark_dataset)
+        # find hot pixel mask
+        hotmask = (dark_l0 - mean_bias(dark_l0)) > 20
 
-        export(dataset, hotmask)
+        # iterate over all non-dark images
+        for path in images - dark:
+            # FIXME - skip all nonoob images
+            # if 'STR' not in str(path):
+            #     continue
+            print(path.stem)
+            dataset = L1A(xr.open_dataset(path))
+
+            export(dataset, hotmask)
