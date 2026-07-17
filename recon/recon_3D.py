@@ -101,20 +101,25 @@ W = t.tensor(np.stack(
     [np.interp(np.log(rgrid.r), np.log(mr.cpoint_locs), row) for row in w.cpu()]
 ), **d)  # (16, num_shells)
 
-loss_fns = [
-    1 * HuberLoss(mask=f.rmask),
-    1e5 * NegRegularizer(),
-    5e2 * DiffLoss(rgrid),
-    1e1 * SphHarmL1Regularizer(mrinit, weights=W),
-]
-
+# combined mask, not just rmask: fully-masked bins are NaN→0 and would
+# otherwise pull the fit down
 initcoeffs.data[0:1, :], _, _ = gd(
     f, meas, mrinit, lr=1e1,
-    loss_fns=loss_fns[:-1], num_iterations=2000,
+    loss_fns=[1 * HuberLoss(mask=mask), 1e5 * NegRegularizer(), 5e2 * DiffLoss(rgrid)],
+    num_iterations=2000,
     callbacks=[LogCallback('L0init', '/tmp/losses_baseline.txt')],
 )
 
-# do full reconstruction
+# stage 2: stronger radial smoothing + A00 anchored to trusted stage-1 values —
+# swept on real quiet data and validated against Zoennchen truth (see AGENTS.md)
+loss_fns = [
+    1 * HuberLoss(mask=mask),
+    1e5 * NegRegularizer(),
+    5e4 * DiffLoss(rgrid),
+    1e1 * SphHarmL1Regularizer(mrinit, weights=W),
+    1e4 * AnchorRegularizer(initcoeffs),
+]
+
 coeffs, retrieved_meas, losses = gd(
     f, meas, mr, lr=1e0,
     loss_fns=loss_fns, num_iterations=3000,

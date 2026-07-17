@@ -32,13 +32,13 @@ d = {'device': 'cuda'}
 
 datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
 
-# desc = 'quiet'
+# desc = 'quiet_25'
 # start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
 # desc = 'january'
 # start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-desc = 'march'
+desc = 'march_25'
 start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
 end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
 
@@ -58,10 +58,10 @@ ims = [im for pair in zip(nfi.l1c_ims.values, wfi.l1c_ims.values) for im in pair
 # model grid is 3D — per-date batching comes from a leading N dim on the coeffs
 # (the model's einsum carries arbitrary leading dims). The forward needs a
 # dynamic (N,...) grid so each density slice maps to one date's NFI+WFI pair.
-rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
+rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 # same spatial grid + a leading N axis, only to put the operator in dynamic mode
 rgrid_dyn = DefaultGrid(
-    (N, *rgrid.shape), size_r=(3, 15), spacing='log',
+    (N, *rgrid.shape), size_r=(3, 25), spacing='log',
     t=dates, timeunit='ns',
 )
 
@@ -96,6 +96,7 @@ loss_fns = [
     # 1 * SquareLoss(mask=f.rmask),
     1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
+    1e5 * DiffLoss(rgrid),
     # 2e4 * DiffLoss(rgrid),            # radial smoothness (was 5e2)
 ]
 
@@ -104,7 +105,7 @@ open('/tmp/losses_storm.txt', 'w').close()
 initcoeffs = t.zeros((N, *mrinit.coeffs_shape), **d)
 
 coeffs, retrieved_meas, losses = gd(
-    f, t.nan_to_num(meas) * f.rmask, mrinit, lr=5e1,
+    f, t.nan_to_num(meas), mrinit, lr=5e1,
     loss_fns=loss_fns, num_iterations=1000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],
