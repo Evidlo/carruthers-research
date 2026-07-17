@@ -14,7 +14,7 @@ from glide.common_components.generate_view_geom import gen_mission
 from glide.science.model_sph import *
 from glide.science.recon.loss_sph import ReqErr
 
-from glide.science.plotting_sph import cardplot
+from glide.science.plotting_sph import cardplot, carderr
 from glide.science.plotting import sphharmplot
 from sph_raytracer.retrieval import gd
 from sph_raytracer.plotting import image_stack
@@ -28,29 +28,40 @@ spec = {'device':'cuda', 'dtype':t.float64}
 device = 'cuda'
 
 cams = [
-    # CameraL1BNFI(nadir_nfi_mode(t_op=360)),
+    CameraL1BNFI(nadir_nfi_mode(t_op=360)),
     CameraL1BWFI(nadir_wfi_mode(t_op=360))
 ]
 sc = gen_mission(num_obs=1, cams=cams)
 
-grid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
+rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
+sgrid = DefaultGrid((500, 45, 60), size_r=(3, 15), spacing='log')
 
 # load data model
 # FIXME: this is ugly
-dm = TIMEGCMModel(device=device)
+# dm = TIMEGCMModel(device=device)
+model = TIMEGCMModel
+# model = Pratik25StormModel
+dm = model(device=device)
 dyn_grid = DefaultGrid(
     t=dm.grid.t,
-    r_b=grid.r_b, e_b=grid.e_b, a_b=grid.a_b,
+    r_b=rgrid.r_b, e_b=rgrid.e_b, a_b=rgrid.a_b,
 )
-dm = TIMEGCMModel(grid=dyn_grid, device=device)
+sdyn_grid = DefaultGrid(
+    t=dm.grid.t,
+    r_b=sgrid.r_b, e_b=sgrid.e_b, a_b=sgrid.a_b,
+)
+dm = model(grid=dyn_grid, device=device)
 dataset = dm()
+# sdm = model(grid=sdyn_grid, device=device)
+sdm = TIMEGCMModel(grid=sdyn_grid, device=device)
+sdataset = sdm()
 
-f = ForwardSph(sc, grid, device=device)
+f = ForwardSph(sc, rgrid, sgrid=sgrid, device=device, use_albedo=True, use_aniso=True, use_noise=True)
 # ----- Learning Setup -----
 # %% setup
 
-num_atoms = 6
-m = SphHarmSplineModel(grid, max_l=2, cpoints=16, device=device, extra_channels=[num_atoms])
+num_atoms = 8
+m = SphHarmSplineModel(rgrid, max_l=2, cpoints=16, device=device, extra_channels=[num_atoms])
 
 # random init method
 weights = t.rand(m.coeffs_shape, **spec)
@@ -116,7 +127,7 @@ t.cuda.empty_cache()
 
 
 coeffs = t.ones((dm.grid.shape.t, mr.coeffs_shape), requires_grad=True, **spec)
-num_iterations = 600
+num_iterations = 5000
 progress_bar = True
 from sph_raytracer.retrieval import detach_loss
 
@@ -125,7 +136,7 @@ best_coeffs = None
 
 optim = t.optim.Adam([coeffs, weights], lr=1e-1)
 # perform requested number of iterations
-f_meas = f(dataset)
+# f_meas = f(dataset)
 try:
     from tqdm import tqdm
     for _ in (pbar := tqdm(range(num_iterations), disable=not progress_bar)):
@@ -138,7 +149,15 @@ try:
         # f_result = t.linalg.norm(f_meas.flatten(-3) - f(mr(coeffs)).flatten(-3), ord='fro')**2
         # f_loss = 1 * f_result / (math.prod(f.range_shape) * mr.num_atoms)
 
-        f_result = t.mean((dataset - mr(coeffs))**2)
+        # orthogonal weights
+        # a, b = (0, 1, 2), (2, 1, 0)
+        # q, r = t.linalg.qr(weights.moveaxis(a, b))
+        # orth_weights = (q @ t.tril(r)).moveaxis(b, a)
+        orth_weights = weights
+
+        f_result = t.mean((dataset - mr.m(t.einsum('w...,tw...->t...', orth_weights, coeffs)))**2)
+        # f_result = t.max(t.mean((dataset - mr.m(t.einsum('w...,tw...->t...', orth_weights, coeffs)))**2, dim=(1, 2, 3)))
+        # FIXME: t.mean already normalizes out the shape of dm.grid
         f_loss = 1 * f_result / math.prod(dm.grid.shape)
 
 
@@ -149,13 +168,25 @@ try:
         # r_loss = 1e-2 * r_result / math.prod(f.range_shape) * mr.num_atoms
 
         r_loss = 0
-        # r_loss = 1e2 * t.mean(-coeffs.clip(max=0))
+        r_loss = 1e2 * t.mean(-coeffs.clip(max=0))
 
         # --- sparsity term ---
         # s_loss = 0
         # ||W||_1
-        s_result = t.abs(weights).sum()
-        s_loss = 1e-4 * s_result / math.prod(weights.shape)
+        # s_result = t.abs(weights).sum()
+        # encourage coefficients to be on same atom
+        # s_loss = 1e-6 * s_result / math.prod(weights.shape)
+
+        # ||sum_(radius) DW||_0
+        # s_result = m.sph_coeffs(weights).sum(dim=-1).abs()
+        # s_loss = 1e1 * s_result.sum() / math.prod(s_result.shape)
+
+        # W = weights.abs().sum(dim=-1)
+        # s_loss = 1e-9 * ((W @ W.T) - t.eye(W.shape[0], device=W.device)).pow(2).sum()
+        # gram = W @ W.T
+        # s_loss = 1e-9 * (gram.triu(1).pow(2).sum() + gram.tril(-1).pow(2).sum())
+        s_result = t.linalg.norm(f(mr()).flatten(1).T, ord='fro')
+        s_loss = 1e-9 * s_result / math.prod(f.rvg.shape)
 
         tot_loss = f_loss + r_loss + s_loss
 
@@ -172,10 +203,40 @@ try:
 except KeyboardInterrupt:
     pass
 
+# ----- Recon -----
+# %% recon
+from dominate_tags import *
+
+from sph_raytracer.loss import *
+from glide.science.recon.loss_sph import *
+
+fig_recons = []
+for truth_ind in [0, 50, 100, 150, 200, 250]:
+    loss_fns = [
+        1 * AbsLoss(projection_mask=f.proj_maskb),
+        1e4 * NegRegularizer(),
+        ReqErr(dataset[truth_ind], m.grid, mr.grid, interval=100)
+    ]
+
+    f_noisy = f.noise(sdataset[truth_ind])
+    # f_noisy = f(dataset[truth_ind])
+    retr_coeffs, retr_meas, losses = gd(
+        f, f_noisy, mr, lr=5e-2,
+        loss_fns=loss_fns, num_iterations=500,
+    )
+    retrieved = mr(retr_coeffs)
+    fig_recons.append(
+        caption(
+            f"truth={dm}, recon={mr}, {dm.grid.nptime[truth_ind]}",
+            plot(cardplot(retrieved, mr.grid), height="300px"),
+            plot(sphharmplot(m.sph_coeffs(mr.l_coeffs(retr_coeffs)), m), height="300px"),
+            plot(carderr(retrieved, dataset[truth_ind], mr.grid, dm.grid), height="300px")
+        )
+    )
+
 # ----- Plotting -----
 # %% plot
 
-from dominate_tags import *
 import matplotlib.pyplot as plt
 import matplotlib
 plt.close('all')
@@ -183,9 +244,13 @@ matplotlib.use('Agg')
 
 
 with document('Dictionary Learning') as d:
+    util.raw(f"""
+    This is a single-vantage reconstruction of samples from the {type(dm).__name__} dataset
+    using a dictionary learned from {type(dm).__name__}.
+    """)
     l_bases = mr() # learned 3D bases
     with itemgrid(len(l_bases), flow='column'):
-        for n, (weight, l_basis) in enumerate(zip(weights, l_bases)):
+        for n, (weight, l_basis) in enumerate(zip(orth_weights, l_bases)):
             print(n)
             plt.close()
             caption(
@@ -194,15 +259,23 @@ with document('Dictionary Learning') as d:
                 plot(sphharmplot(m.sph_coeffs(weight), m), height="300px"),
                 plot(image_stack(y_weights[n, 0], f.rvg[0]))
             )
-    n = 0 # look at nth result in stack
-    recon = mr(coeffs)[n]
-    recon_coeffs = t.einsum('w...,tw->t...', weights, coeffs)[n]
-    caption(
-        "Sum",
-        plot(cardplot(recon, mr.grid), height="300px"),
-        plot(sphharmplot(m.sph_coeffs(recon_coeffs), m), height="300px"),
-    )
+    tags.h1("Reconstructions")
+    tags.hr()
+    tags.div(fig_recons)
+
+
+    # n = 0 # look at nth result in stack
+    # recon = mr(coeffs)[n]
+    # recon_coeffs = t.einsum('w...,tw->t...', weights, coeffs)[n]
+    # caption(
+    #     "Sum",
+    #     plot(cardplot(recon, mr.grid), height="300px"),
+    #     plot(sphharmplot(m.sph_coeffs(recon_coeffs), m), height="300px"),
+    # )
     tags.pre(open('dictionary_learning.py', 'r').read())
 
-open(outfile:='/www/dictionary3.html', 'w').write(d.render())
+open(outfile:=f'/www/dictionary/{type(dm).__name__}_{type(sdm).__name__}.html', 'w').write(d.render())
+print(f'Wrote {outfile}')
+from datetime import datetime
+open(outfile:=f'/www/dictionary_archive/{datetime.now().isoformat()}.html', 'w').write(d.render())
 print(f'Wrote {outfile}')

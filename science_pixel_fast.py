@@ -22,12 +22,15 @@ m = Zoennchen00Model(DefaultGrid())
 sc = SpaceCraft('2025-12-24', sensors=[CameraL1BWFI()])
 # sc = SpaceCraft('2025-12-24', sensors=[CameraL1BNFI()])
 N = sc.sensor.npix
-sgeom = ScienceGeom(sc, scishape)
-sgeom_fast = ScienceGeomFast(sc, scishape)
+sgeom = ScienceGeom(sc, scishape, bin_type='frac')
+sgeom_fast = ScienceGeomFast(sc, scishape, oversample=50)
 ngeom = NativeGeom(sc)
 
 meas_tru = m.analytic(sgeom).numpy()
 meas = m.analytic(ngeom).numpy()
+
+np.random.seed(0)
+meas = np.random.random(meas.shape)
 
 # load pregenerated measurements from file
 d = np.load('science_pixel_fast.npy', allow_pickle=True)
@@ -48,7 +51,9 @@ coords = np.stack(np.meshgrid(*(np.arange(s) for s in shape), indexing='ij'), ax
 
 
 with Timer(prefix='Original') as p:
-    meas_sb = sgeom.bin(meas[None])
+    # meas_sb = sgeom.bin(meas[None])
+    meas_sb = sgeom.bin(meas[None], normalize=False)
+    meas_sb = sgeom.bin.statistics(meas[None], np.mean)
 
 
 # ----- Fast Science Pixel Binning -----
@@ -56,7 +61,9 @@ with Timer(prefix='Original') as p:
 # plt.imsave('/www/out.png', meas)
 
 with Timer(prefix='Fast') as p:
-    meas_warp = sgeom_fast.bin(meas[None]).squeeze()
+    # meas_warp = sgeom_fast.bin(meas[None]).squeeze()
+    sgeom_fast.bin.normalize = False
+    meas_warp = sgeom_fast.bin.statistics(meas[None], np.mean).squeeze()
 
 # ----- Plotting -----
 
@@ -75,14 +82,16 @@ cmap.set_bad(color='black')
 
 plt.figure(dpi=200, figsize=(12, 12))
 
+# vlim = {'vmin':-2, 'vmax':2}
+vlim = {}
 plt.subplot(2, 3, 1)
 plt.title('Original/Truth % Error')
-plt.imshow(err_sb, vmin=-2, vmax=2, cmap=cmap)
+plt.imshow(err_sb, cmap=cmap, **vlim)
 plt.colorbar()
 
 plt.subplot(2, 3, 2)
 plt.title('Fast/Truth % Error')
-plt.imshow(err_warp, vmin=-2, vmax=2, cmap=cmap)
+plt.imshow(err_warp, cmap=cmap, **vlim)
 plt.colorbar()
 
 plt.subplot(2, 3, 3)
@@ -102,8 +111,9 @@ plt.colorbar()
 
 plt.subplot(2, 3, 6)
 plt.title('Original/Fast % Error')
-plt.imshow(err, vmin=-2, vmax=2, cmap=cmap)
+plt.imshow(err, cmap=cmap, **vlim)
 plt.colorbar()
 
 plt.tight_layout()
-plt.savefig(f'/www/spb_{sc.sensor.mode.channel}.png')
+plt.savefig(f:=f'/www/spb_{sc.sensor.mode.channel}_rand.png')
+print(f'Wrote {f}')

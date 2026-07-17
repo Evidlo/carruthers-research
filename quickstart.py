@@ -36,7 +36,7 @@ m = GonzaloModel(grid=grid)
 g = grid = m.grid
 g50 = DefaultGrid((50, 50, 50))
 g500 = DefaultGrid((500, 50, 50))
-mr = SphHarmModel(grid, max_l=3)
+mr = SphHarmSplineModel(grid, max_l=3, cpoints=16)
 density = m()
 
 # sim = L1CSim(disable_noise=True)

@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 
-import matplotlib.pyplot as plt
-import tomosipo as ts
+import matplotlib
+matplotlib.use('Agg')
 
-from mas.plotting import slider
+from glide.common_components.generate_view_geom import *
+from glide.science.forward_sph import sc2vg, ScienceGeom
+from glide.science.model_sph import DefaultGrid
 
-from glide.science.forward import glide_orbit
-from glide.science.model import zoennchen_model, default_geom
-from glide.science.plotting import orbit_svg
+from sph_raytracer import Operator
 
-geom = default_geom()
-x = zoennchen_model(geom)
+sc = gen_mission(num_obs=50, duration=180)
 
-op = ts.operator(geom, glide_orbit())
+# %% operator
 
-orbit_svg(geom, op.projection_geometry, rotate=90, scale=1).save('/srv/www/test.svg')
+grid = DefaultGrid()
+vg = sum(ScienceGeom(s, (50, 100)) for s in sc)
 
-y = op(x)
+op = Operator(grid, vg, _compute=False)
 
-plt.imshow(y[:, 0])
-plt.show()
+op.plot().save('/www/out.gif')

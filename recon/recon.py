@@ -29,7 +29,7 @@ from itertools import product
 __file__ = 'recon.py'
 code = open(__file__).read()
 
-device = 'cuda'
+d = {'device': 'cuda'}
 
 # %% setup
 # ----- Truth/Recon Models -----
@@ -38,17 +38,21 @@ sgrid = DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log')
 rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
 
 truth_models = [
-    Zoennchen24Model(grid=sgrid, device=device),
-    # Pratik25Model(grid=sgrid, num_times=1, device=device),
-    # TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
+    Zoennchen24Model(grid=sgrid, **d),
+    # Pratik25Model(grid=sgrid, num_times=1, **d),
+    # TIMEGCMModel(grid=sgrid, **d, offset=10, fill_value='nearest')
 ]
 
 L_opts = [3] # sph harm spline order
 c_opts = [12] # sph harm spline control points
 recon_models = [
-    SphHarmSplineModel(rgrid, max_l=L, device=device, cpoints=cpoints, spacing='log')
+    SphHarmSplineModel(rgrid, max_l=L, **d, cpoints=cpoints, spacing='log')
     for L, cpoints in product(L_opts, c_opts)
 ]
+
+# stage-2 loss variants: current regularizer set, fidelity-only, and
+# sensitivity-weighted L1 (Wiener-like, see recon_3D.py)
+loss_opts = ['diff+l1', 'bare', 'diff+l1W']
 
 # ----- Measurement Generation -----
 
@@ -63,15 +67,15 @@ def safe_mask(npix):
     mask[npix//3:2*npix//3] = False
     return mask
 
-input_mask = (safe_mask(s.sensor.npix) for s in sc)
+# input_mask = (safe_mask(s.sensor.npix) for s in sc)
 
 f = ForwardSph(
     sc, sgrid=sgrid, # calibrator=cal
     rgrid=rgrid,
     # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
-    rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
-    input_mask=input_mask,
-    device=device
+    rvg=sum([ScienceGeomFast(s, (100, 50), **d) for s in sc]),
+    # input_mask=input_mask,
+    **d
 )
 
 # %% recon
@@ -90,76 +94,96 @@ with document('Two Week Retrievals') as doc:
         truth_figs = []
 
         tags.h1(f'truth={mt}')
-        with itemgrid(len(c_opts), flow='row'):
+        with itemgrid(len(loss_opts), flow='row'):
 
             for nr, mr in enumerate(recon_models):
-                cshape = 'x'.join(map(str, mr.coeffs_shape))
-                desc = f'spline{cshape}L{mr.max_l}_{num_obs:02d}obs'
-                print('---', desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}', '---')
-
                 t.cuda.empty_cache()
 
-                # ----- Retrieval -----
-                # choose loss functions and regularizers with weights
-                loss_fns = [
-                    1 * AbsLoss(projection_mask=f.proj_maskb),
-                    1e4 * NegRegularizer(),
-                    1e1 * SphHarmL1Regularizer(mr),
-                    5e2 * DiffLoss(rgrid),
-                    ReqErr(truth, mt.grid, mr.grid, interval=100),
-                ]
-
-                # Clear losses log on new run
-                open('/tmp/losses_baseline.txt', 'w').close()
-
-                # do a fast initialization reconstruction with L=0
+                # reconstruction model for fast initialization of A00
                 mrinit = SphHarmSplineModel(
                     rgrid, max_l=0,
                     cpoints=mr.cpoints, spacing=mr.spacing,
-                    device=device,
+                    **d
                 )
-                initcoeffs = t.zeros(mr.coeffs_shape, device=device)
+
+                # sensitivity weighting (Wiener-like): penalize coefficients
+                # ∝ 1/‖F·basis‖ (see recon_3D.py)
+                sens = sensitivity(f, mr, mask=f.rmask)
+                w = sens.median() / sens
+                W = t.tensor(np.stack(
+                    [np.interp(np.log(rgrid.r), np.log(mr.cpoint_locs), row) for row in w.cpu()]
+                ), **d)
+
+                initcoeffs = t.zeros(mr.coeffs_shape, **d)
 
                 initcoeffs.data[0:1, :], _, _ = gd(
-                    f, meas, mrinit, lr=1e2,
-                    loss_fns=loss_fns, num_iterations=3000,
+                    f, meas, mrinit, lr=1e1,
+                    loss_fns=[1 * HuberLoss(mask=f.rmask), 1e5 * NegRegularizer(), 5e2 * DiffLoss(rgrid)],
+                    num_iterations=2000,
                     callbacks=[LogCallback('L0init', '/tmp/losses_baseline.txt')],
                 )
-                # do full reconstruction
-                coeffs, retrieved_meas, losses = gd(
-                    f, meas, mr, lr=1e1,
-                    loss_fns=loss_fns, num_iterations=6000,
-                    coeffs=initcoeffs,
-                    callbacks=[LogCallback('fullL3', '/tmp/losses_baseline.txt')],
-                )
 
+                for lname in loss_opts:
+                    cshape = 'x'.join(map(str, mr.coeffs_shape))
+                    desc = f'spline{cshape}L{mr.max_l}_{num_obs:02d}obs_{lname}'
+                    print('---', desc, f'truth:{nt}/{len(truth_models)}  recon:{nr}/{len(recon_models)}', '---')
 
-                retrieved = mr(coeffs)
+                    # Clear losses log on new run
+                    open('/tmp/losses_baseline.txt', 'w').close()
 
-                t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
+                    loss_fns = {
+                        'diff+l1': [
+                            1 * HuberLoss(mask=f.rmask),
+                            1e5 * NegRegularizer(),
+                            5e2 * DiffLoss(rgrid),
+                            1e1 * SphHarmL1Regularizer(mrinit),
+                        ],
+                        'bare': [
+                            1 * HuberLoss(mask=f.rmask),
+                            1e5 * NegRegularizer(),
+                        ],
+                        'diff+l1W': [
+                            1 * HuberLoss(mask=f.rmask),
+                            1e5 * NegRegularizer(),
+                            5e2 * DiffLoss(rgrid),
+                            1e1 * SphHarmL1Regularizer(mrinit, weights=W),
+                        ],
+                    }[lname]
 
-                # figure settings
-                figset = {'height': 200}
-
-                if issubclass(type(mr), SphHarmModel):
-                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
-                else:
-                    sphharm = ''
-
-                caption(
-                    f"recon={mr}",
-                    plot(carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), **figset),
-                    sphharm,
-                    tags.br(),
-                    tags.details(
-                        tags.summary(),
-                        plot(loss_plot(losses), **figset),
-                        caption("Recon", plot(cardplot(retrieved.squeeze(), rgrid, norm='log'), **figset)),
-                        caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
-                        caption("Recon", plot(cardplotaxes(retrieved.squeeze(), rgrid, yscale='log'), **figset)),
-                        caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
+                    # do full reconstruction
+                    coeffs, retrieved_meas, losses = gd(
+                        f, meas, mr, lr=1e0,
+                        loss_fns=loss_fns, num_iterations=3000,
+                        coeffs=initcoeffs.clone(),
+                        callbacks=[LogCallback('fullL3', '/tmp/losses_baseline.txt')],
                     )
-                )
+
+                    retrieved = mr(coeffs)  # (N, r, e, a)
+
+                    t.save(coeffs, f'/tmp/coeffs_{desc}.tr')
+
+                    # figure settings
+                    figset = {'height': 200}
+
+                    if issubclass(type(mr), SphHarmModel):
+                        sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
+                    else:
+                        sphharm = ''
+
+                    caption(
+                        f"recon={mr} loss={lname}",
+                        plot(carderr(retrieved.squeeze(), truth.squeeze(), rgrid, sgrid), **figset),
+                        sphharm,
+                        tags.br(),
+                        tags.details(
+                            tags.summary(),
+                            plot(loss_plot(losses), **figset),
+                            caption("Recon", plot(cardplot(retrieved.squeeze(), rgrid, norm='log'), **figset)),
+                            caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
+                            caption("Recon", plot(cardplotaxes(retrieved.squeeze(), rgrid, yscale='log'), **figset)),
+                            caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
+                        )
+                    )
 
     tags.h1("Source Code")
     tags.code(tags.pre(open('recon.py').read()))

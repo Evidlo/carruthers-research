@@ -6,7 +6,7 @@
 
 from itertools import product
 import matplotlib
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, SymLogNorm
 matplotlib.use('Agg')
 
 from sph_raytracer.retrieval import gd
@@ -14,8 +14,8 @@ from sph_raytracer.loss import CheaterLoss
 from sph_raytracer.model import FullyDenseModel
 
 from glide.science.model_sph import *
-from glide.science.plotting_sph import carderr, cardplot
-from glide.science.plotting import sphharmplot
+from glide.science.plotting_sph import carderr, cardplot, cardplotaxes
+from glide.science.plotting import sphharmplot, loss_plot
 from glide.science.recon.loss_sph import L1Loss
 
 from dominate_tags import *
@@ -23,18 +23,20 @@ from dominate_tags import *
 
 device = 'cuda'
 # grid = default_grid(spacing='log')
-grid = DefaultGrid(size_r=(3, 15))
+grid = DefaultGrid((500, 50, 50), size_r=(3, 15))
 
 truth_models = (
     # PratikModel(grid, device=device, season='spring'),
     # ZoennchenModel(device=device),
     # GonzaloModel(grid, device=device),
     # MSISModel(grid=grid, fill_value=0, num_times=1, window=14, device=device),
+
     Zoennchen24Model(grid, device=device),
-    TIMEGCMModel(grid, fill_value=0, num_times=1, offset=np.timedelta64(0, 'D'), device=device),
-    TIMEGCMModel(grid, fill_value=0, num_times=1, offset=np.timedelta64(10, 'D'), device=device),
-    Pratik25Model(grid, num_times=1, offset=np.timedelta64(0, 'W'), device=device),
-    Pratik25Model(grid, num_times=1, offset=np.timedelta64(7, 'W'), device=device),
+    GonzaloModel(grid, device=device),
+    Pratik25Model(grid, num_times=1, device=device),
+    Pratik25StormModel(grid, num_times=1, offset=7, freq=None, device=device),
+    TIMEGCMModel(grid, fill_value=0, num_times=1, device=device),
+    TIMEGCMStormModel(grid, fill_value=0, num_times=1, device=device),
 )
 
 # truth_models = [
@@ -58,9 +60,18 @@ truth_models = (
 # )
 
 recon_models = []
-for l, c in product(l_opts:=(0, 1, 2, 3, 4, 5), c_opts:=(8, 12, 16)):
-    recon_models += [SphHarmSplineModel(grid, max_l=l, cpoints=c, device=device, spacing='log')]
-
+# for l, c in product(l_opts:=(0, 1, 2), c_opts:=(3, 4, 6, 8)):
+# for l, c in product(l_opts:=(0, 1), c_opts:=(8, 12)):
+# for l, c in product(l_opts:=[0], c_opts:=[2]):
+for l, c in product(l_opts:=(0, 1, 2, 3, 4), c_opts:=(8, 12, 16)):
+    recon_models += [SphHarmSplineModel(grid, max_l=l,
+        cpoints=c, device=device, kind='bspline', spacing='log'
+    )]
+# for c in (c_opts:=(8, 12, 16)):
+#     recon_models += [SphHarmSplineModel(
+#         grid, lm=[(l, 0) for l in range(4)],
+#         cpoints=c, device=device, kind='catmullrom', spacing='log'
+#     )]
 
 
 from glide.debug import warning_exception
@@ -82,42 +93,61 @@ with document('Direct Fit') as doc:
         tags.h1(f'truth={truth_model}')
 
         with itemgrid(len(c_opts), flow='row'):
-            for n_r, recon_model in enumerate(recon_models):
-                print(f'truth:{n_t}/{len(truth_models)}  recon:{n_r}/{len(recon_models)}')
+            for nr, mr in enumerate(recon_models):
+                print(f'truth:{n_t+1}/{len(truth_models)}  recon:{nr+1}/{len(recon_models)}')
 
                 # create the loss and set to fidelity so it is minimized
                 loss = CheaterLoss(truth)
                 loss.kind = 'fidelity'
                 coeffs, _, losses = gd(
                     lambda _: _, None,
-                    model=recon_model,
-                    num_iterations=300,
-                    # coeffs=list(recon_model.spline.parameters())[0],
+                    model=mr,
+                    num_iterations=500,
+                    # coeffs=list(mr.spline.parameters())[0],
                     # lr=1e0,
                     lr=1e2,
                     # optimizer=(optimizer:=optim.Yogi),
                     loss_fns=[loss],
-                    # coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float32, requires_grad=True),
-                    coeffs=t.ones(recon_model.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
+                    # coeffs=t.ones(mr.coeffs_shape, device=device, dtype=t.float32, requires_grad=True),
+                    coeffs=t.ones(mr.coeffs_shape, device=device, dtype=t.float64, requires_grad=True),
                     device=device
                 )
-                recon = recon_model(coeffs)
-                if issubclass(type(recon_model), SphHarmModel):
-                    sphharm = plot(sphharmplot(recon_model.sph_coeffs(coeffs), recon_model), height=200)
+                # FIXME: check for negative values in plotting functions
+                recon = mr(coeffs).clamp(1)
+                if issubclass(type(mr), SphHarmModel):
+                    sphharm = plot(sphharmplot(mr.sph_coeffs(coeffs), mr), height=200)
                 else:
                     sphharm = ''
 
+                # figure settings
+                figset = {'height': 200}
+
+                # remove DC component
+                c2 = coeffs.clone()
+                c2[0, :] = 0
+                recon2 = mr(c2)
+
                 caption(
-                    f"recon={recon_model}",
+                    f"recon={mr}",
                     plot(carderr(recon.squeeze(), truth.squeeze(), grid, grid), height=200),
                     sphharm,
+
+                    tags.details(
+                        tags.summary(),
+                        plot(loss_plot(losses), **figset),
+                        caption("Recon", plot(cardplot(recon.squeeze(), grid, norm='log'), **figset)),
+                        caption("Truth", plot(cardplot(truth.squeeze(), grid, norm='log'), **figset)),
+                        caption("Recon", plot(cardplotaxes(recon.squeeze(), grid, yscale='log'), **figset)),
+                        caption("Truth", plot(cardplotaxes(truth.squeeze(), grid, yscale='log'), **figset)),
+                        caption("Recon (no DC)", plot(cardplot(recon2.squeeze(), grid, norm=SymLogNorm(10)), **figset)),
+                    )
                 )
 
     tags.code(tags.pre(open('direct_fit_sph.py').read()))
 
 
 # %% plot
-f = Path(f'/www/lara/direct_fit.html')
-# f = Path(f'/www/out.html')
+# f = Path(f'/www/lara/direct_fit.html')
+f = Path(f'/www/sph/out_15_flip.html')
 f.write_text(doc.render())
 print(f'Saved to {f}')
