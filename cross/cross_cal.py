@@ -6,42 +6,27 @@
 # Earlier azimuth-median / science-binned versions: cross_cal_old.py.
 
 from glide.science.forward_sph import R_earth
-from glide.science_data_processing.L1 import get_spacecraft
+from load import load
 
 from domrep import *
 from pathlib import Path
+from joblib import Parallel, delayed
 from scipy.spatial import cKDTree
 
 import numpy as np
-import xarray as xr
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
+datapath = Path('/data-products')
 
 periods = {
-    'january': ('2026-01-19', '2026-01-21'),
-    # 'quiet': ('2026-03-01', '2026-03-15'),
-    # 'march': ('2026-03-20', '2026-03-22'),
+    'january': ('2026-01-01', '2026-02-01'),
+    'march': ('2026-03-01', '2026-04-01'),
 }
-
-# Alex's counts→Rayleighs factors; only the relative NFI/WFI factor matters to the ratios
-fac = {'NFI': 1.111e-5, 'WFI': 1.4515e-5}
 
 # overlap band of NFI/WFI tangent point radii
 band = (3.2, 6.0)
-
-
-def load(datapath, channel, dates):
-    """Per-day L1C NetCDFs for `channel` nearest `dates`, in Rayleighs, with
-    SpaceCraft objects built from the geometry fields."""
-    paths = sorted(Path(datapath).glob(f'*{channel.upper()}*.nc'))
-    ds = xr.open_mfdataset(paths, combine='by_coords', chunks={'time': 1}) \
-        .sel(time=dates, method='nearest')
-    ds['scraft'] = ('time', get_spacecraft(ds))
-    ds['l1c_ims'] *= fac[channel]
-    return ds
 
 
 def tp_radius(pos, rays):
@@ -68,33 +53,58 @@ def ratio_im(nfi_sc, wfi_sc, nfi_im, wfi_im, k=25):
     inband = nfi_sc.sensor.spec.mask_fov & np.isfinite(nfi_im) \
         & (tp >= band[0]) & (tp <= band[1])
 
-    _, idx = cKDTree(wrays.reshape(-1, 3)).query(nrays[inband], k=k, workers=-1)
+    _, idx = cKDTree(wrays.reshape(-1, 3)).query(nrays[inband], k=k, workers=4)
     im = np.full(nfi_im.shape, np.nan)
     im[inband] = np.nanmean(wvals[idx], axis=-1) / nfi_im[inband]
     return im
+
+
+def up_axes(nfi_sc, *scs):
+    """Detector up-axis (displayed up, decreasing row) of each spacecraft in
+    `scs` as (right, up) components in `nfi_sc`'s display frame.  Pass
+    pre-registration (L1A) spacecraft to see true detector roll in the
+    registered L1C frame."""
+    rays = lambda sc: unit_los(sc, (sc.sensor.npix, sc.sensor.npix))
+    nrays = rays(nfi_sc)
+    c = nrays.shape[0] // 2
+    ex = nrays[c, c + 1] - nrays[c, c - 1]
+    ey = nrays[c - 1, c] - nrays[c + 1, c]
+    ex, ey = ex / np.linalg.norm(ex), ey / np.linalg.norm(ey)
+
+    def comp(r):
+        m = r.shape[0] // 2
+        u = r[m - 1, m] - r[m + 1, m]
+        u = u / np.linalg.norm(u)
+        return np.array([u @ ex, u @ ey])
+
+    return [comp(rays(sc)) for sc in scs]
 
 
 with document('NFI/WFI Cross Calibration (2D interpolation)') as doc:
     figset = {'height': 350}
 
     for name, (start, end) in periods.items():
-        dates = np.linspace(
-            np.datetime64(start).astype('datetime64[ns]').astype(float),
-            np.datetime64(end).astype('datetime64[ns]').astype(float),
-            30,
+        dates = np.arange(
+            np.datetime64(start), np.datetime64(end), np.timedelta64(6, 'h'),
         ).astype('datetime64[ns]')
         nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates)
 
         # nearest-selection duplicates frames on short ranges
         _, keep = np.unique(nfi.time.values, return_index=True)
 
-        ims2d, labels = [], []
-        for i in sorted(keep):
-            ims2d.append(ratio_im(
+        # joblib/loky spawns fresh workers — fork-based pools (pqdm) OOM here
+        # from copy-on-write duplication of the multi-GB parent
+        ims2d = Parallel(n_jobs=16)(
+            delayed(ratio_im)(
                 nfi.scraft.values[i], wfi.scraft.values[i],
-                nfi.l1c_ims.values[i], wfi.l1c_ims.values[i],
-            ))
-            labels.append(str(nfi.time.values[i])[:16])
+                nfi.images.values[i], wfi.images.values[i],
+            ) for i in sorted(keep)
+        )
+        arrows = [up_axes(
+            nfi.scraft.values[i],
+            nfi.scraft_l1a.values[i], wfi.scraft_l1a.values[i],
+        ) for i in sorted(keep)]
+        labels = [str(nfi.time.values[i])[:16] for i in sorted(keep)]
 
         tags.h1(f'{name}: {start} … {end}')
         with itemgrid(length=3):
@@ -103,10 +113,22 @@ with document('NFI/WFI Cross Calibration (2D interpolation)') as doc:
 
             with caption('interpolated WFI / NFI pixels (2D sky interpolation)'):
                 with slider(labels=labels):
-                    for im, label in zip(ims2d, labels):
+                    for im, (nup, wup), label in zip(ims2d, arrows, labels):
                         fig, ax = plt.subplots()
                         h = ax.imshow(im, clim=(1, 2))
                         fig.colorbar(h, label='interp WFI / NFI')
+                        # detector up-axes: base at center, short (display y is
+                        # flipped, so up = -dy)
+                        c, L = im.shape[0] / 2, 0.1 * im.shape[0]
+                        for u, color in ((nup, 'tab:orange'), (wup, 'tab:green')):
+                            ax.annotate(
+                                '', xy=(c + L * u[0], c - L * u[1]), xytext=(c, c),
+                                arrowprops=dict(color=color, arrowstyle='-|>'),
+                            )
+                        ax.legend(handles=[
+                            plt.Line2D([], [], color='tab:orange', label='NFI detector up'),
+                            plt.Line2D([], [], color='tab:green', label='WFI detector up'),
+                        ], loc='upper right', fontsize=8)
                         ax.set_title(label)
                         plot(fig, **figset)
                         plt.close(fig)
