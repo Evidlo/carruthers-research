@@ -31,21 +31,21 @@ d = {'device': 'cuda'}
 
 # %% load measurements
 
-datapath = Path('/home/alex/carruthers/pseudo_l1c_data/')
+datapath = Path('/data-products')
 
-desc = 'quiet'
+desc = 'quiet_prod'
 start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
 end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=14).astype('datetime64[ns]')
-N = len(dates)
 
 from load import load
-nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates, 1/1.4)
+nfi, wfi, dates = load(datapath, dates)
+N = len(dates)
 
 # set up spacecraft
 sc = [s for pair in zip(nfi.scraft.values, wfi.scraft.values) for s in pair]
-ims = [im for pair in zip(nfi.l1c_ims.values, wfi.l1c_ims.values) for im in pair]
+ims = [im for pair in zip(nfi.images.values, wfi.images.values) for im in pair]
 
 # %% forward model
 
@@ -77,11 +77,11 @@ t.cuda.empty_cache()
 # calibrate() bins the L1C images and converts to the retrieval's native units
 # (atom·Re/cm³). It assumes Rayleigh input (×1e6)
 meas = f.calibrate(ims, disable_noise=True)
-mask = f.rmask * meas.isfinite()
-meas = t.nan_to_num(meas) * mask
+# mask = f.rmask * meas.isfinite()
+# meas = t.nan_to_num(meas) * mask
 
 # full reconstruction model
-mr = SphHarmSplineModel(rgrid, max_l=3, cpoints=8, spacing='log', **d)
+mr = SphHarmSplineModel(rgrid, max_l=1, cpoints=8, spacing='log', **d)
 
 # reconstruction model for fast initialization of A00
 mrinit = SphHarmSplineModel(
@@ -104,8 +104,8 @@ W = t.tensor(np.stack(
 # combined mask, not just rmask: fully-masked bins are NaN→0 and would
 # otherwise pull the fit down
 initcoeffs.data[0:1, :], _, _ = gd(
-    f, meas, mrinit, lr=1e1,
-    loss_fns=[1 * HuberLoss(mask=mask), 1e5 * NegRegularizer(), 5e2 * DiffLoss(rgrid)],
+    f, t.nan_to_num(meas), mrinit, lr=1e1,
+    loss_fns=[1 * HuberLoss(mask=f.rmask), 1e5 * NegRegularizer()],
     num_iterations=2000,
     callbacks=[LogCallback('L0init', '/tmp/losses_baseline.txt')],
 )
@@ -113,15 +113,16 @@ initcoeffs.data[0:1, :], _, _ = gd(
 # stage 2: stronger radial smoothing + A00 anchored to trusted stage-1 values —
 # swept on real quiet data and validated against Zoennchen truth (see AGENTS.md)
 loss_fns = [
-    1 * HuberLoss(mask=mask),
+    1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
     5e4 * DiffLoss(rgrid),
-    1e1 * SphHarmL1Regularizer(mrinit, weights=W),
-    1e4 * AnchorRegularizer(initcoeffs),
+    1e3 * SphHarmL1Regularizer(mrinit, weights=W),
+    # 1e3 * SphHarmL1Regularizer(mrinit),
+    # 1e4 * AnchorRegularizer(initcoeffs),
 ]
 
 coeffs, retrieved_meas, losses = gd(
-    f, meas, mr, lr=1e0,
+    f, t.nan_to_num(meas), mr, lr=1e0,
     loss_fns=loss_fns, num_iterations=3000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('fullL3', '/tmp/losses_baseline.txt')],
@@ -138,7 +139,7 @@ with document('Storm 3D Month Retrieval') as doc:
     tags.h1(f'3D retrieval, {N} dates {labels[0]} … {labels[-1]}')
     with itemgrid(length=2):
 
-        figset = {'height': 250}
+        figset = {'width': 720}
 
         with caption('Recon (cardinal slices)'):
             plot(cardplot(retrieved, rgrid, norm='log'), **figset)
@@ -149,13 +150,13 @@ with document('Storm 3D Month Retrieval') as doc:
         with caption('Radiance (TP alt) vs Density'):
             with slider(labels=labels):
                 items = zip(
-                    retrieved[None, ...].repeat(num_obs, 1, 1, 1),
+                    retrieved[None, ...].repeat(N, 1, 1, 1),
                     meas[:, 0], meas[:, 1],
                     rvg.leaves[0].geoms, rvg.leaves[1].geoms
                 )
                 for ret, nmeas, wmeas, nvg, wvg in items:
                     fig = radiance_v_density(ret, rgrid, nmeas, nvg, wmeas, wvg)
-                    plot(fig)
+                    plot(fig, **figset)
 
         with caption('Coefficients'):
             plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
@@ -172,5 +173,5 @@ print(f'Saved to {outfile}')
 
 # also archive the reconstruction
 from datetime import datetime
-outfile = Path(f'/www/sph/archive/{datetime.now().isoformat()}_storm.html')
+outfile = Path(f'/www/sph/archive/{datetime.now().isoformat()}_3D.html')
 outfile.write_text(doc.render())

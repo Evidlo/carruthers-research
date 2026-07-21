@@ -11,6 +11,7 @@ from load import load
 from domrep import *
 from pathlib import Path
 from joblib import Parallel, delayed
+from tqdm import tqdm
 from scipy.spatial import cKDTree
 
 import numpy as np
@@ -42,7 +43,7 @@ def unit_los(sc, shape):
 
 
 def ratio_im(nfi_sc, wfi_sc, nfi_im, wfi_im, k=25):
-    """interpolated-WFI / NFI per native NFI pixel in the overlap band, NaN
+    """(ratio, interp-WFI, NFI) per native NFI pixel in the overlap band, NaN
     outside.  WFI value = mean of the k nearest WFI pixels by LOS direction."""
     pos = nfi_sc.position_gse[:, 0] / R_earth.to('km').value
     nrays = unit_los(nfi_sc, nfi_im.shape)
@@ -54,9 +55,11 @@ def ratio_im(nfi_sc, wfi_sc, nfi_im, wfi_im, k=25):
         & (tp >= band[0]) & (tp <= band[1])
 
     _, idx = cKDTree(wrays.reshape(-1, 3)).query(nrays[inband], k=k, workers=4)
-    im = np.full(nfi_im.shape, np.nan)
-    im[inband] = np.nanmean(wvals[idx], axis=-1) / nfi_im[inband]
-    return im
+    im, num, den = (np.full(nfi_im.shape, np.nan) for _ in range(3))
+    num[inband] = np.nanmean(wvals[idx], axis=-1)
+    den[inband] = nfi_im[inband]
+    im[inband] = num[inband] / den[inband]
+    return im, num, den
 
 
 def up_axes(nfi_sc, *scs):
@@ -87,32 +90,38 @@ with document('NFI/WFI Cross Calibration (2D interpolation)') as doc:
         dates = np.arange(
             np.datetime64(start), np.datetime64(end), np.timedelta64(6, 'h'),
         ).astype('datetime64[ns]')
-        nfi, wfi = load(datapath, 'NFI', dates), load(datapath, 'WFI', dates)
+        nfi, wfi, dates = load(datapath, dates)
 
         # nearest-selection duplicates frames on short ranges
         _, keep = np.unique(nfi.time.values, return_index=True)
 
         # joblib/loky spawns fresh workers — fork-based pools (pqdm) OOM here
         # from copy-on-write duplication of the multi-GB parent
-        ims2d = Parallel(n_jobs=16)(
+        ims2d, wims, nims = zip(*Parallel(n_jobs=16)(
             delayed(ratio_im)(
                 nfi.scraft.values[i], wfi.scraft.values[i],
                 nfi.images.values[i], wfi.images.values[i],
             ) for i in sorted(keep)
-        )
+        ))
+        # fixed dynamic range over the whole period, robust to hot pixels
+        wclim = np.nanpercentile(np.stack(wims), (1, 99))
+        nclim = np.nanpercentile(np.stack(nims), (1, 99))
         arrows = [up_axes(
             nfi.scraft.values[i],
             nfi.scraft_l1a.values[i], wfi.scraft_l1a.values[i],
         ) for i in sorted(keep)]
         labels = [str(nfi.time.values[i])[:16] for i in sorted(keep)]
+        # actual WFI frame times — can differ from the NFI partner by hours
+        wlabels = [str(wfi.time.values[i])[:16] for i in sorted(keep)]
 
         tags.h1(f'{name}: {start} … {end}')
-        with itemgrid(length=3):
+        sliderlock(group=name)
+        with itemgrid(length=4):
             plt.close('all')
 
 
             with caption('interpolated WFI / NFI pixels (2D sky interpolation)'):
-                with slider(labels=labels):
+                with slider(labels=labels, group=name):
                     for im, (nup, wup), label in zip(ims2d, arrows, labels):
                         fig, ax = plt.subplots()
                         h = ax.imshow(im, clim=(1, 2))
@@ -140,6 +149,19 @@ with document('NFI/WFI Cross Calibration (2D interpolation)') as doc:
                 ax.set_ylabel('median WFI / NFI')
                 fig.autofmt_xdate()
                 plot(fig, **figset)
+
+            for ims, clim, titles, title in (
+                    (wims, wclim, wlabels, 'interpolated WFI (annulus)'),
+                    (nims, nclim, labels, 'NFI (annulus)')):
+                with caption(title):
+                    with slider(labels=labels, group=name):
+                        for im, label in zip(ims, titles):
+                            fig, ax = plt.subplots()
+                            h = ax.imshow(im, clim=clim)
+                            fig.colorbar(h, label='Rayleighs')
+                            ax.set_title(label)
+                            plot(fig, **figset)
+                            plt.close(fig)
 
     tags.h1("Source Code")
     tags.code(tags.pre(open('cross_cal.py').read()))

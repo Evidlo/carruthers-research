@@ -6,6 +6,7 @@ cossmo/
 papers/
 
 **/*.hdf
+**/*.mat
 **/*.h5
 **/*.parquet
 **/*.zip
