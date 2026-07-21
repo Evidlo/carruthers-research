@@ -58,13 +58,11 @@ ims = [im for pair in zip(nfi.images.values, wfi.images.values) for im in pair]
 
 # %% forward model
 
-# model grid is 3D — per-date batching comes from a leading N dim on the coeffs
-# (the model's einsum carries arbitrary leading dims). The forward needs a
-# dynamic (N,...) grid so each density slice maps to one date's NFI+WFI pair.
-rgrid = DefaultGrid((200, 45, 60), size_r=(3, 25), spacing='log')
-# same spatial grid + a leading N axis, only to put the operator in dynamic mode
-rgrid_dyn = DefaultGrid(
-    (N, *rgrid.shape), size_r=(3, 25), spacing='log',
+# leading N axis puts the operator in dynamic mode, so each density slice maps
+# to one date's NFI+WFI pair instead of broadcasting across all views. Model and
+# plotting read only the spatial dims
+rgrid = DefaultGrid(
+    (N, 200, 45, 60), size_r=(3, 25), spacing='log',
     t=dates, timeunit='ns',
 )
 
@@ -76,10 +74,10 @@ rvg = ZippedGeom(
 
 ralbedo=Albedo(
     xr.open_mfdataset('/home/jackson/glide-sdc/glide/validation/radiative_transfer/pipeline_test/albedo_data_*.nc'),
-    rgrid_dyn, **d
+    rgrid, **d
 )
 f = ForwardSph(
-    sc, rgrid=rgrid_dyn, rvg=rvg,
+    sc, rgrid=rgrid, rvg=rvg,
     g_factor=g(11e11),
     ralbedo=ralbedo(),
     **d
