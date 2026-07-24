@@ -33,7 +33,7 @@ d = {'device': 'cuda'}
 
 datapath = Path('/data-products')
 
-desc = 'quiet_prod'
+desc = 'quiet'
 start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
 end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
 
@@ -43,9 +43,11 @@ from load import load
 nfi, wfi, dates = load(datapath, dates)
 N = len(dates)
 
-# set up spacecraft
-sc = [s for pair in zip(nfi.scraft.values, wfi.scraft.values) for s in pair]
-ims = [im for pair in zip(nfi.images.values, wfi.images.values) for im in pair]
+# (date, camera) pairs, mirroring the leading axes of the zipped rvg below
+ims = list(zip(
+    nfi.images.values,
+    # wfi.images.values
+))
 
 # %% forward model
 
@@ -62,11 +64,11 @@ alb = alb.reindex(r=np.append(alb.r, 1e6), method='ffill')
 # zip the two cameras onto a new axis
 rvg = ZippedGeom(
     sum([ScienceGeomFast(s, (100, 50), **d) for s in nfi.scraft.values]),
-    sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
+    # sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
 )
 
 f = ForwardSph(
-    sc, rgrid=rgrid, rvg=rvg,
+    rgrid=rgrid, rvg=rvg,
     g_factor=g(11e11),
     ralbedo=Albedo(alb, rgrid, **d)(),
     **d
@@ -152,7 +154,7 @@ with document('Storm 3D Month Retrieval') as doc:
                 items = zip(
                     retrieved[None, ...].repeat(N, 1, 1, 1),
                     meas[:, 0], meas[:, 1],
-                    rvg.leaves[0].geoms, rvg.leaves[1].geoms
+                    rvg.leaves[0], rvg.leaves[1]
                 )
                 for ret, nmeas, wmeas, nvg, wvg in items:
                     fig = radiance_v_density(ret, rgrid, nmeas, nvg, wmeas, wvg)

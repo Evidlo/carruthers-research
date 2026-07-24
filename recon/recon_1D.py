@@ -32,29 +32,27 @@ d = {'device': 'cuda'}
 
 datapath = Path('/data-products')
 
-desc = 'quiet'
-start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
 # desc = 'january'
 # start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-# desc = 'march'
+# desc = 'march_quiet'
+# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
+# desc = 'march_storm'
 # start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+desc = 'march_complete'
+start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-04-01').astype('datetime64[ns]').astype(float)
 
-# FIXME: -----------------------------------------
-# FIXME: -----------------------------------------
-# FIXME: -----------------------------------------
-dates = np.linspace(start, end, num_obs:=30).astype('datetime64[ns]')
+dates = np.linspace(start, end, num_obs:=50).astype('datetime64[ns]')
 
 from load import load
 nfi, wfi, dates = load(datapath, dates)
 N = len(dates)
 
-# date-major interleave [nfi_0, wfi_0, nfi_1, wfi_1, ...] for sc/ims — matches
-# rvg.geoms order, so calibrate lines up per image
-sc = [s for pair in zip(nfi.scraft.values, wfi.scraft.values) for s in pair]
-ims = [im for pair in zip(nfi.images.values, wfi.images.values) for im in pair]
+# (date, camera) pairs, mirroring the leading axes of the zipped rvg below
+ims = list(zip(nfi.images.values, wfi.images.values))
 
 # %% forward model
 
@@ -77,7 +75,7 @@ ralbedo=Albedo(
     rgrid, **d
 )
 f = ForwardSph(
-    sc, rgrid=rgrid, rvg=rvg,
+    rgrid=rgrid, rvg=rvg,
     g_factor=g(11e11),
     ralbedo=ralbedo(),
     **d
@@ -122,32 +120,35 @@ import time
 
 with document('Storm 1D Month Retrieval') as doc:
     tags.h1(f'1D retrieval, {N} dates {labels[0]} … {labels[-1]}')
+
+    sliderlock(label="Lock sliders")
+
     with itemgrid(length=2):
 
         s = time.time()
 
         figset = {'width': 720}
         with caption('Recon (cardinal slices)'):
-            slider(*[plot(cardplot(retrieved[i], rgrid, norm='log', method='nearest'), **figset)
+            slider(*[plot(cardplot(retrieved[i], rgrid.static, norm='log', method='nearest'), **figset)
                     for i in range(N)], labels=labels)
 
         with caption('Recon (radial profile)'):
-            slider(*[plot(cardplotaxes(retrieved[i], rgrid, yscale='log', method='nearest'), **figset)
+            slider(*[plot(cardplotaxes(retrieved[i], rgrid.static, yscale='log', method='nearest'), **figset)
                     for i in range(N)], labels=labels)
 
-        with caption('Diff from t=0 (cardinal slices)'):
+        with caption('Percent Diff from t=0 (cardinal slices)'):
             slider(*[plot(carderr(
                 retrieved[i], retrieved[0],
-                rgrid, rgrid,
+                rgrid.static, rgrid.static,
                 # norm='log'
                 method='nearest',
                 title='H Density Percent Change',
             ), **figset) for i in range(N)], labels=labels)
 
-        with caption('Diff from t=0 (radial profile)'):
+        with caption('Percent Diff from t=0 (radial profile)'):
             slider(*[plot(carderraxes(
                 retrieved[i], retrieved[0],
-                rgrid,
+                rgrid.static,
                 # yscale='log'
                 method='nearest',
                 title='H Density Percent Change',
@@ -169,7 +170,7 @@ with document('Storm 1D Month Retrieval') as doc:
                 for i in range(N):
                     plot(sphharmplot(mr.sph_coeffs(coeffs)[i], mr), width=500)
 
-        with caption('Diff from t=0. Radiance (TP alt) vs Density'):
+        with caption('Percent Diff from t=0. Radiance (TP alt) vs Density'):
             with slider(labels=labels):
                 for i in range(N):
                     fig = radiance_v_density_err(
@@ -181,9 +182,9 @@ with document('Storm 1D Month Retrieval') as doc:
 
         plot(loss_plot(losses), **figset)
 
-        with caption('Diff from t=0. Radiance (TP alt) vs Density'):
+        with caption('Radiance'):
             with slider(labels=labels):
-                for n, w in zip(ims[::2], ims[1::2]):
+                for n, w in ims:
                     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), dpi=150)
                     ax1.imshow(n)
                     ax2.imshow(w)
