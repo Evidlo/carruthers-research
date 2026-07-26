@@ -23,8 +23,8 @@ from glide.validation.instrument import *
 from glide.calibration import *
 from glide.common_components.cam import *
 # from glide.validation.L1C_simulator import L1CSim
-from sph_raytracer import *
-import tomosipo as ts
+from tomosphero import *
+# import tomosipo as ts
 from datetime import *
 from astropy.time import Time
 
@@ -42,7 +42,7 @@ density = m()
 # sim = L1CSim(disable_noise=True)
 # x = sim(sc, [8000 * np.ones((512, 512)), 8000 * np.ones((1024, 1024))])
 
-vol = default_vol(shape=100, size=50)
+# vol = default_vol(shape=100, size=50)
 # vg = sum([NativeGeom(s) for s in sc])
 f = ForwardSph(sc, grid, use_aniso=True, use_albedo=True)
 
