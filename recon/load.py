@@ -9,10 +9,18 @@ import xarray as xr
 from glide.science_data_processing.L1 import get_spacecraft
 
 def datefilter(paths, dates):
-    """Keep per-day files whose filename YYYYMMDD falls within `dates` ±1 day."""
+    """Keep per-day files whose filename YYYYMMDD falls within `dates` ±1 day,
+    at most one per day.  A day present at several versions (e.g. 20260510 as
+    both v1.0 and v1.1) would otherwise be concatenated twice, giving a
+    non-unique time index that .sel(method='nearest') cannot reindex."""
     lo, hi = dates.min().astype('datetime64[D]') - 1, dates.max().astype('datetime64[D]') + 1
     fdate = lambda p: np.datetime64('{}-{}-{}'.format(*re.search(r'_(\d{4})(\d{2})(\d{2})_', p.name).groups()))
-    return [p for p in paths if lo <= fdate(p) <= hi]
+    fver = lambda p: tuple(map(int, re.search(r'_v(\d+)\.(\d+)\.nc$', p.name).groups()))
+    best = {}
+    for p in sorted(paths, key=fver):  # ascending version, last write wins
+        if lo <= fdate(p) <= hi:
+            best[fdate(p)] = p
+    return [best[k] for k in sorted(best)]
 
 def load(datapath, dates, extra_scaling=1, tolerance=np.timedelta64(30, 'm')):
     """Open per-day NFI and WFI L1C NetCDFs under `datapath`/L1C/L1C, lazily
