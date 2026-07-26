@@ -35,7 +35,7 @@ datapath = Path('/data-products')
 
 desc = 'quiet'
 start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-05-15').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=14).astype('datetime64[ns]')
 
@@ -45,15 +45,15 @@ N = len(dates)
 
 # (date, camera) pairs, mirroring the leading axes of the zipped rvg below
 ims = list(zip(
-    nfi.images.values,
-    # wfi.images.values
+    # nfi.images.values,
+    wfi.images.values
 ))
 
 # %% forward model
 
 # grid extends far past the science region so the outer shells absorb the WFI
 # additive background instead of corrupting 6–15 Re (see AGENTS.md)
-rgrid = DefaultGrid((200, 45, 60), size_r=(3, 15), spacing='log')
+rgrid = DefaultGrid((200, 45, 60), size_r=(3, 60), spacing='log')
 
 # albedo table ends at 41.4 Re (NaNs the whole operator beyond) — extend it
 # outward holding the outer row, which is already flat at ~1.007
@@ -63,8 +63,8 @@ alb = alb.reindex(r=np.append(alb.r, 1e6), method='ffill')
 
 # zip the two cameras onto a new axis
 rvg = ZippedGeom(
-    sum([ScienceGeomFast(s, (100, 50), **d) for s in nfi.scraft.values]),
-    # sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
+    # sum([ScienceGeomFast(s, (100, 50), **d) for s in nfi.scraft.values]),
+    sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
 )
 
 f = ForwardSph(
@@ -83,7 +83,7 @@ meas = f.calibrate(ims, disable_noise=True)
 # meas = t.nan_to_num(meas) * mask
 
 # full reconstruction model
-mr = SphHarmSplineModel(rgrid, max_l=1, cpoints=8, spacing='log', **d)
+mr = SphHarmSplineModel(rgrid, max_l=1, cpoints=10, spacing='log', **d)
 
 # reconstruction model for fast initialization of A00
 mrinit = SphHarmSplineModel(
@@ -117,8 +117,8 @@ initcoeffs.data[0:1, :], _, _ = gd(
 loss_fns = [
     1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
-    5e4 * DiffLoss(rgrid),
-    1e3 * SphHarmL1Regularizer(mrinit, weights=W),
+    # 5e4 * DiffLoss(rgrid),
+    # 1e2 * SphHarmL1Regularizer(mrinit, weights=W),
     # 1e3 * SphHarmL1Regularizer(mrinit),
     # 1e4 * AnchorRegularizer(initcoeffs),
 ]
@@ -130,8 +130,12 @@ coeffs, retrieved_meas, losses = gd(
     callbacks=[LogCallback('fullL3', '/tmp/losses_baseline.txt')],
 )
 
+coeffs_nonsymm = coeffs.clone()
+coeffs_nonsymm[0] = 0
+
 # zeros/negatives in the far background-absorber shells break log plots
 retrieved = mr(coeffs).clamp(min=1e-4)  # (r, e, a)
+retrieved_nonsymm = mr(coeffs_nonsymm)  # (r, e, a)
 
 # %% plot — per-date sliders
 
@@ -144,26 +148,32 @@ with document('Storm 3D Month Retrieval') as doc:
         figset = {'width': 720}
 
         with caption('Recon (cardinal slices)'):
-            plot(cardplot(retrieved, rgrid, norm='log'), **figset)
+            plot(cardplot(retrieved, rgrid), **figset)
 
         with caption('Recon (radial profile)'):
-            plot(cardplotaxes(retrieved, rgrid, yscale='log'), **figset)
+            plot(cardplotaxes(retrieved, rgrid), **figset)
+
+        nonsymm = {'scale': 'linear', 'lim': (-5, 5)}
+        with caption('Recon non A00 (cardinal slices)'):
+            plot(cardplot(retrieved_nonsymm / retrieved, rgrid, **nonsymm), **figset)
+
+        with caption('Recon non A00 (radial profile)'):
+            plot(cardplotaxes(retrieved_nonsymm / retrieved, rgrid, **nonsymm), **figset)
 
         with caption('Radiance (TP alt) vs Density'):
             with slider(labels=labels):
-                items = zip(
-                    retrieved[None, ...].repeat(N, 1, 1, 1),
-                    meas[:, 0], meas[:, 1],
-                    rvg.leaves[0], rvg.leaves[1]
-                )
-                for ret, nmeas, wmeas, nvg, wvg in items:
-                    fig = radiance_v_density(ret, rgrid, nmeas, nvg, wmeas, wvg)
+                for i in range(N):
+                    fig = radiance_v_density(
+                        retrieved, rgrid,
+                        meas[i], [leaf[i] for leaf in rvg.leaves]
+                    )
                     plot(fig, **figset)
 
         with caption('Coefficients'):
             plot(sphharmplot(mr.sph_coeffs(coeffs), mr), **figset)
 
         plot(loss_plot(losses), **figset)
+
 
     tags.h1("Source Code")
     tags.code(tags.pre(open('recon_3D.py').read()))

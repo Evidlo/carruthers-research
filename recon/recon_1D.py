@@ -129,18 +129,17 @@ with document('Storm 1D Month Retrieval') as doc:
 
         figset = {'width': 720}
         with caption('Recon (cardinal slices)'):
-            slider(*[plot(cardplot(retrieved[i], rgrid.static, norm='log', method='nearest'), **figset)
+            slider(*[plot(cardplot(retrieved[i], rgrid.static, method='nearest'), **figset)
                     for i in range(N)], labels=labels)
 
         with caption('Recon (radial profile)'):
-            slider(*[plot(cardplotaxes(retrieved[i], rgrid.static, yscale='log', method='nearest'), **figset)
+            slider(*[plot(cardplotaxes(retrieved[i], rgrid.static, method='nearest'), **figset)
                     for i in range(N)], labels=labels)
 
         with caption('Percent Diff from t=0 (cardinal slices)'):
             slider(*[plot(carderr(
                 retrieved[i], retrieved[0],
                 rgrid.static, rgrid.static,
-                # norm='log'
                 method='nearest',
                 title='H Density Percent Change',
             ), **figset) for i in range(N)], labels=labels)
@@ -149,19 +148,16 @@ with document('Storm 1D Month Retrieval') as doc:
             slider(*[plot(carderraxes(
                 retrieved[i], retrieved[0],
                 rgrid.static,
-                # yscale='log'
                 method='nearest',
                 title='H Density Percent Change',
             ), **figset) for i in range(N)], labels=labels)
 
-        nmeas, wmeas = meas[:, 0], meas[:, 1]
-        nvg, wvg = rvg.leaves[0], rvg.leaves[1]
         with caption('Radiance (TP alt) vs Density'):
             with slider(labels=labels):
                 for i in range(N):
                     fig = radiance_v_density(
                         retrieved[i], rgrid,
-                        nmeas[i], nvg[i], wmeas[i], wvg[i]
+                        meas[i], [leaf[i] for leaf in rvg.leaves]
                     )
                     plot(fig, **figset)
 
@@ -175,8 +171,7 @@ with document('Storm 1D Month Retrieval') as doc:
                 for i in range(N):
                     fig = radiance_v_density_err(
                         retrieved[i], retrieved[0], rgrid,
-                        nmeas[i], nmeas[0], nvg[i],
-                        wmeas[i], wmeas[0], wvg[i]
+                        meas[i], meas[0], [leaf[i] for leaf in rvg.leaves]
                     )
                     plot(fig, **figset)
 
@@ -184,10 +179,12 @@ with document('Storm 1D Month Retrieval') as doc:
 
         with caption('Radiance'):
             with slider(labels=labels):
-                for n, w in ims:
-                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), dpi=150)
-                    ax1.imshow(n)
-                    ax2.imshow(w)
+                for im in ims:
+                    fig, axes = plt.subplots(
+                        1, len(im), figsize=(4 * len(im), 4), dpi=150, squeeze=False
+                    )
+                    for ax, chan in zip(axes[0], im):
+                        ax.imshow(chan)
                     plot(fig, **figset)
 
     tags.h1("Source Code")
