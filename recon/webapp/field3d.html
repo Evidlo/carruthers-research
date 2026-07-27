@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exosphere — 3D field rendering approaches</title>
+<style>
+:root {
+  color-scheme: dark;
+  --page:           #0d0d0d;
+  --surface-1:      #1a1a19;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #898781;
+  --grid:           #2c2c2a;
+  --axis:           #383835;
+  --border:         rgba(255,255,255,0.10);
+  --accent:         #3987e5;
+  --ctl-bg:         #232322;
+  --ctl-hover:      #2f2f2d;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page:           #f9f9f7;
+  --surface-1:      #fcfcfb;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --grid:           #e1e0d9;
+  --axis:           #c3c2b7;
+  --border:         rgba(11,11,11,0.10);
+  --accent:         #2a78d6;
+  --ctl-bg:         #ffffff;
+  --ctl-hover:      #f0efec;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--text-primary);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#topbar {
+  flex: 0 0 auto; background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-start;
+}
+.grp { display: flex; flex-direction: column; gap: 3px; }
+.grp > .lbl {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); white-space: nowrap;
+}
+.row { display: flex; gap: 6px; align-items: center; }
+.sep { width: 1px; align-self: stretch; background: var(--border); }
+select, button {
+  font: inherit; color: var(--text-primary); background: var(--ctl-bg);
+  border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--ctl-hover); }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+input[type=range] { accent-color: var(--accent); width: 118px; height: 18px; }
+.val { font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 46px; font-size: 12px; }
+.seg { display: flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 5px 5px 0; }
+
+#grid {
+  flex: 1 1 auto; display: grid;
+  grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 8px; padding: 8px; min-height: 0;
+}
+.panel {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; display: flex; flex-direction: column;
+  min-height: 0; min-width: 0; overflow: hidden; position: relative;
+}
+.panel > h2 {
+  margin: 0; padding: 7px 10px 5px; font-size: 11px; font-weight: 600;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--text-secondary);
+  display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+}
+.panel > h2 .note {
+  font-weight: 400; letter-spacing: 0; text-transform: none;
+  color: var(--text-muted); font-size: 11px;
+}
+.cv { flex: 1 1 auto; min-height: 0; position: relative; }
+/* touch-action: none stops the browser claiming the gesture for pan/zoom
+   before pointermove ever fires — without it, drag does nothing on mobile */
+canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+canvas.drag { cursor: grabbing; }
+canvas.giz {
+  position: absolute; left: 6px; top: 4px;
+  width: 78px; height: 78px; pointer-events: none; cursor: default;
+}
+.hud {
+  position: absolute; left: 10px; bottom: 8px;
+  font-size: 10px; color: var(--text-muted);
+  pointer-events: none; text-shadow: 0 1px 3px var(--page);
+}
+.cbar {
+  position: absolute; right: 10px; top: 10px; bottom: 10px; width: 10px;
+  border: 1px solid var(--border); border-radius: 2px;
+}
+.cbLab {
+  position: absolute; right: 24px; font-size: 10px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px var(--page);
+}
+/* phones: one column, scrollable, and give each panel enough height to read */
+@media (max-width: 760px) {
+  #grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-auto-rows: min(62vh, 420px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #topbar { gap: 6px 12px; padding: 6px 8px; }
+  input[type=range] { width: 100px; }
+}
+
+#err {
+  position: fixed; inset: 0; display: none; padding: 30px;
+  background: var(--page); color: var(--text-primary);
+  font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; z-index: 99;
+}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="grp">
+    <span class="lbl" title="Synthetic exosphere to render. All start from the same Zoennchen-like r⁻²·⁷⁵ monopole; the named term is added on top as a fraction of it. Hover an option for what it is for.">ground truth</span>
+    <select id="truth"></select>
+  </div>
+  <div class="sep"></div>
+  <div class="grp">
+    <span class="lbl" title="What the colour encodes. 'log density' shows n itself, dominated by the r⁻²·⁷⁵ falloff. 'relative anomaly' divides the monopole out (n/n₀ − 1) so structure is equally visible at every radius — but that weights by the inverse of what carries signal, so faint outer shells look important. 'absolute anomaly' subtracts instead (n − n₀, in cm⁻³, scaled by the 3 Re density) and shows where the atoms actually are.">quantity</span>
+    <div class="seg" id="qSeg"></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Colormap for the active quantity. Sequential maps are offered for log density, diverging maps (with a neutral midpoint at zero) for the anomaly; each family remembers its own choice.">colormap</span>
+    <select id="cmap"></select>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Overall optical depth of the volume rendering. Low values look like thin haze and let you see all the way through; high values make the near side opaque. Affects panels A and B only.">opacity</span>
+    <div class="row"><input type="range" id="opac" min="-1" max="1.6" step="0.02" value="-0.6"><span class="val" id="opacV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Full-scale value of the diverging colour axis, as a percentage departure from the spherical monopole. Lower it to bring out weak structure; raise it if the map saturates. Also sets the deformation amplitude in panel D.">anomaly scale</span>
+    <div class="row"><input type="range" id="ascale" min="-2" max="0.3" step="0.02" value="-0.6"><span class="val" id="ascaleV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Clip radius of the rendered volume, in Earth radii. Pull it in to look inside the outer shells, which otherwise dominate every projection.">outer radius</span>
+    <div class="row"><input type="range" id="rout" min="6" max="25" step="0.5" value="25"><span class="val" id="routV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Which shell panel D deforms and renders, in Earth radii. Sweep it to see how the angular pattern changes with altitude — the spline knots sit at 3, 4.1, 5.5, 7.5, 10.1, 13.7, 18.5 and 25 Re.">shell radius (D)</span>
+    <div class="row"><input type="range" id="rshell" min="3.5" max="24" step="0.25" value="10"><span class="val" id="rshellV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Scales the three isosurface levels in panel B. Lower it to push the surfaces outward to larger radii, raise it to pull them in toward the inner boundary. Levels are geometrically spaced in absolute-anomaly mode and evenly spaced otherwise.">iso levels (B)</span>
+    <div class="row"><input type="range" id="lev" min="-1" max="0.4" step="0.02" value="0"><span class="val" id="levV"></span></div>
+  </div>
+  <div class="sep"></div>
+  <div class="grp">
+    <span class="lbl">&nbsp;</span>
+    <div class="row">
+      <button id="spinBtn">spin</button>
+      <button id="themeBtn" title="light / dark">◐</button>
+      <button id="resetBtn">reset view</button>
+    </div>
+  </div>
+  <div class="grp">
+    <span class="lbl">&nbsp;</span>
+    <div class="row"><span class="val" style="min-width:120px" id="fps"></span></div>
+  </div>
+</div>
+
+<div id="grid">
+  <section class="panel" data-mode="0">
+    <h2 title="Front-to-back emission–absorption integration through the whole volume. Every sample contributes with opacity proportional to its value, so this shows the entire field at once but superposes everything along the line of sight.">A · volume ray-march <span class="note">emission–absorption, the whole field at once</span></h2>
+    <div class="cv"><canvas></canvas><canvas class="giz"></canvas><div class="hud"></div><div class="cbar"></div></div>
+  </section>
+  <section class="panel" data-mode="1">
+    <h2 title="Three soft level sets of the displayed quantity, shaded with a normal from the field gradient. Reads as solid nested surfaces, which makes shape legible but hides everything between the levels.">B · isosurface shells <span class="note">3 soft level sets, gradient-shaded</span></h2>
+    <div class="cv"><canvas></canvas><canvas class="giz"></canvas><div class="hud"></div><div class="cbar"></div></div>
+  </section>
+  <section class="panel" data-mode="2">
+    <h2 title="Integrates the density along each view ray — the quantity the instrument actually measures. In anomaly mode it shows the fractional column contrast, i.e. whether the structure would appear in an image at all. Antisymmetric structure cancels here, which is the point.">C · column projection <span class="note">what the instrument integrates — does the structure survive?</span></h2>
+    <div class="cv"><canvas></canvas><canvas class="giz"></canvas><div class="hud"></div><div class="cbar"></div></div>
+  </section>
+  <section class="panel" data-mode="3">
+    <h2 title="One shell at the selected radius, displaced radially by its angular anomaly and lit as a solid surface. The standard way to read spherical-harmonic content: lobes point where density is high.">D · deformed shell <span class="note">r = R(1 + 0.35·anomaly) — the harmonic lobes</span></h2>
+    <div class="cv"><canvas></canvas><canvas class="giz"></canvas><div class="hud"></div><div class="cbar"></div></div>
+  </section>
+</div>
+
+<div id="err"></div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════
+   field definition — identical basis to the retrieval:  ρ = Σ_h Y_h(θ,φ) f_h(r),
+   f_h(r) = Σ_k S_k(r) c_{h,k}  with S the cubic spline over K log-spaced knots.
+   The GPU never sees the basis: we bake the 16 radial profiles f_h into a
+   texture and the shader does 16 fetches + 16 harmonics per sample.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const LMAX = 3, NH = 16, K = 8;
+const RMIN = 3, RMAX = 25;
+const NR = 256;                       // radial samples in the profile texture
+const FALLOFF = 2.75;
+
+const hIndex = (l, m) => l * l + (m + l);
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const $ = s => document.querySelector(s);
+const knots = Array.from({length: K}, (_, i) => RMIN * Math.pow(RMAX / RMIN, i / (K - 1)));
+
+function splineY2(t, y) {
+  const n = t.length, y2 = new Float64Array(n), u = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) {
+    const sig = (t[i] - t[i-1]) / (t[i+1] - t[i-1]), p = sig * y2[i-1] + 2;
+    y2[i] = (sig - 1) / p;
+    u[i] = (y[i+1] - y[i]) / (t[i+1] - t[i]) - (y[i] - y[i-1]) / (t[i] - t[i-1]);
+    u[i] = (6 * u[i] / (t[i+1] - t[i-1]) - sig * u[i-1]) / p;
+  }
+  for (let i = n - 2; i >= 0; i--) y2[i] = y2[i] * y2[i+1] + u[i];
+  return y2;
+}
+function splineEval(t, y, y2, x) {
+  const n = t.length;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (hi + lo) >> 1; if (t[m] > x) hi = m; else lo = m; }
+  const h = t[hi] - t[lo], a = (t[hi] - x) / h, b = (x - t[lo]) / h;
+  return a*y[lo] + b*y[hi] + ((a*a*a - a)*y2[lo] + (b*b*b - b)*y2[hi]) * h*h / 6;
+}
+
+// truths are given as coefficient arrays c[h*K+k]; the monopole is the
+// Zoennchen-like r^-2.75 profile and everything else is expressed relative to it
+function makeTruths() {
+  const Y00 = 0.28209479177387814;
+  const base = k => 100 * Math.pow(knots[k] / RMIN, -FALLOFF) / Y00;
+  const mk = (name, note, f) => {
+    const c = new Float64Array(NH * K);
+    for (let k = 0; k < K; k++) c[hIndex(0,0)*K + k] = base(k);
+    f((l, m, fn) => { for (let k = 0; k < K; k++) c[hIndex(l,m)*K + k] += fn(knots[k], k) * base(k); });
+    return { name, note, c };
+  };
+  const step = (r, r0, w) => 1 / (1 + Math.exp(-(r - r0) / w));
+
+  return [
+    mk('Spherical (Zoennchen 2024)', 'no angular structure — the null case', () => {}),
+    mk('N–S dipole 25 %  (A10)', 'the one asymmetry WFI determines well', add =>
+        add(1, 0, () => 0.25)),
+    // NB sign: A11 > 0 puts density at +X (sunward). The observed geocorona is
+    // the opposite — radiation pressure drives H downstream, so the physical
+    // cases below are A11 < 0. The +A11 entry is kept as a sign control.
+    mk('Antisunward dipole −25 %  (A11)', 'the observed sense; also the LOS-parallel phase, unobservable from L1', add =>
+        add(1, 1, () => -0.25)),
+    mk('Sunward dipole +25 %  (A11)  — sign control', 'NOT the observed sense; here to check orientation', add =>
+        add(1, 1, () => 0.25)),
+    mk('Dawn–dusk dipole 25 %  (B11)', 'the other sky-plane phase', add =>
+        add(1, -1, () => 0.25)),
+    mk('Geotail enhancement (A11 < 0, r-growing)', 'dayside depletion deepening outward — the Zoennchen-like asymmetry', add =>
+        add(1, 1, r => -0.45 * step(r, 9, 2.5))),
+    mk('Equatorial bulge  (A20 −20 %)', 'oblate: dense at the equator', add =>
+        add(2, 0, () => -0.20)),
+    mk('Polar cusps  (A20 +25 %)', 'prolate: dense over the poles', add =>
+        add(2, 0, () => 0.25)),
+    mk('Dawn–dusk quadrupole  (A22 20 %)', 'four-lobed in the equatorial plane', add =>
+        add(2, 2, () => 0.20)),
+    mk('Tetrahedral  (A32 20 %)', 'l = 3 — past where the geometry can resolve', add =>
+        add(3, 2, () => 0.20)),
+    mk('Outer dipole only  (A10, r > 10)', 'structure confined to the outer shells', add =>
+        add(1, 0, r => 0.45 * step(r, 11, 1.5))),
+    mk('Inner dipole only  (A10, r < 8)', 'structure confined where WFI has no TP coverage', add =>
+        add(1, 0, r => 0.45 * (1 - step(r, 8, 1.2)))),
+    mk('Everything at once', 'l = 1, 2 and 3 superposed', add => {
+        add(1, 0, () => 0.20); add(1, -1, () => 0.12);
+        add(2, 0, () => 0.15); add(2, 2, () => 0.10); add(3, 2, () => 0.08); }),
+  ];
+}
+const TRUTHS = makeTruths();
+
+// bake f_h(r) for h = 0..15 onto NR log-spaced radii, packed 4 harmonics/texel
+function bakeProfiles(c) {
+  const tex = new Float32Array(NR * 4 * 4);   // width NR, height 4, RGBA
+  const kn = knots.map(Math.log);
+  const logr0 = Math.log(RMIN), dlogr = (Math.log(RMAX) - logr0) / (NR - 1);
+  for (let h = 0; h < NH; h++) {
+    const y = new Float64Array(K);
+    for (let k = 0; k < K; k++) y[k] = c[h*K + k];
+    const y2 = splineY2(kn, y);
+    const row = h >> 2, ch = h & 3;
+    for (let i = 0; i < NR; i++)
+      tex[(row * NR + i) * 4 + ch] = splineEval(kn, y, y2, logr0 + i * dlogr);
+  }
+  return tex;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   shaders
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════
+   colormaps — control-point lists, low→high. Entries given as
+   {dark, light} follow the page theme; plain arrays are theme-independent.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const CMAPS = {
+  seq: {
+    'Blue (palette)': {
+      dark:  ['#232322','#184f95','#2a78d6','#86b6ef','#cde2fb'],
+      light: ['#f0efec','#9ec5f4','#3987e5','#1c5cab','#0d366b'] },
+    'Viridis': ['#440154','#414487','#2a788e','#22a884','#7ad151','#fde725'],
+    'Cividis': ['#00224e','#123570','#3b496c','#575d6d','#707173','#8a8678',
+                '#a59c74','#c3b369','#e1cc55','#fee838'],
+    'Inferno': ['#000004','#320a5a','#781c6d','#bb3654','#ec6824','#fbb41a','#fcffa4'],
+    'Greys': {
+      dark:  ['#141414','#3a3a38','#6a6a66','#a0a09a','#e6e6e0'],
+      light: ['#f5f5f2','#c8c8c2','#8f8f8a','#565654','#1a1a1a'] },
+  },
+  div: {
+    'Blue–Red (palette)': {
+      dark:  ['#cde2fb','#3987e5','#1c5cab','#383835','#8f3b2a','#e05a44','#f2b3a0'],
+      light: ['#104281','#2a78d6','#9ec5f4','#f0efec','#f2b3a0','#d03b3b','#6e1414'] },
+    'Cool–Warm': ['#3b4cc0','#6f91f2','#a9c6fd','#dddddd','#f6b69b','#e3705b','#b40426'],
+    'Vik': ['#001261','#0b4a8b','#3e94b8','#a6d4de','#f0eee2','#dfba8a','#c07333',
+            '#8d3106','#4d0d02'],
+    'Purple–Green': ['#40004b','#762a83','#9970ab','#c2a5cf','#f7f7f7','#a6dba0',
+                     '#5aae61','#1b7837','#00441b'],
+    'Blue–Orange': ['#053061','#2166ac','#4393c3','#92c5de','#f7f7f7','#fdb863',
+                    '#e08214','#b35806','#7f3b08'],
+  },
+};
+
+const isDark = () => document.documentElement.dataset.theme !== 'light';
+const cmapStops = (fam, name) => {
+  const e = CMAPS[fam][name];
+  return Array.isArray(e) ? e : (isDark() ? e.dark : e.light);
+};
+
+function buildLUT(stops) {
+  const rgb = stops.map(h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16)));
+  const out = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const x = i / 255 * (rgb.length - 1);
+    const j = Math.min(rgb.length - 2, Math.floor(x)), u = x - j;
+    for (let c = 0; c < 3; c++) out[i*4 + c] = Math.round(rgb[j][c] + (rgb[j+1][c] - rgb[j][c]) * u);
+    out[i*4 + 3] = 255;
+  }
+  return out;
+}
+const cssGradient = stops => `linear-gradient(to top, ${stops.join(', ')})`;
+
+const VERT = `#version 300 es
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const FRAG = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+uniform sampler2D uProf;      // NR x 4, RGBA = harmonics 4h..4h+3
+uniform sampler2D uLut;       // 256 x 1, the active colormap
+uniform vec3  uRo;            // camera position
+uniform vec3  uRight, uUp, uFwd;
+uniform vec2  uRes;
+uniform float uTanHalf;
+uniform float uRmin, uRmax;
+uniform float uOpacity;
+uniform float uAnomScale;
+uniform int   uQuantity;      // 0 = log density, 1 = angular anomaly
+uniform int   uSteps;
+uniform vec3  uBg;
+uniform float uLogLo, uLogHi;
+uniform float uColNorm;       // reference column, for the projection mode
+uniform float uRshell;        // shell radius, for the deformed-shell mode
+uniform float uNref;          // peak monopole density, the absolute-anomaly scale
+uniform vec3  uLevels;        // isosurface levels (panel B), set per quantity
+out vec4 fragColor;
+
+const float PI = 3.14159265359;
+const float NRf = ${NR}.0;
+
+/* ── colour: a 256-entry LUT built on the CPU, so the colormap menu is
+      pure data and the shader never changes ──────────────────────────── */
+vec3 lut(float t) { return texture(uLut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb; }
+
+/* ── field ──────────────────────────────────────────────────────────── */
+void profiles(float r, out vec4 f0, out vec4 f1, out vec4 f2, out vec4 f3) {
+  float x = (log(r) - log(uRmin)) / (log(uRmax) - log(uRmin)) * (NRf - 1.0);
+  x = clamp(x, 0.0, NRf - 1.001);
+  int i = int(x); float u = x - float(i);
+  f0 = mix(texelFetch(uProf, ivec2(i,0),0), texelFetch(uProf, ivec2(i+1,0),0), u);
+  f1 = mix(texelFetch(uProf, ivec2(i,1),0), texelFetch(uProf, ivec2(i+1,1),0), u);
+  f2 = mix(texelFetch(uProf, ivec2(i,2),0), texelFetch(uProf, ivec2(i+1,2),0), u);
+  f3 = mix(texelFetch(uProf, ivec2(i,3),0), texelFetch(uProf, ivec2(i+1,3),0), u);
+}
+
+// real orthonormal Y_lm, l ≤ 3, in the same order as the retrieval's h index
+void harmonics(vec3 n, out vec4 y0, out vec4 y1, out vec4 y2, out vec4 y3) {
+  float ux = n.x, uy = n.y, uz = n.z;
+  float xx = ux*ux, yy = uy*uy, zz = uz*uz;
+  y0 = vec4(0.2820947918,
+            0.4886025119 * uy,
+            0.4886025119 * uz,
+            0.4886025119 * ux);
+  y1 = vec4(1.0925484306 * ux * uy,
+            1.0925484306 * uy * uz,
+            0.3153915653 * (3.0*zz - 1.0),
+            1.0925484306 * ux * uz);
+  y2 = vec4(0.5462742153 * (xx - yy),
+            0.5900435899 * uy * (3.0*xx - yy),
+            2.8906114426 * ux * uy * uz,
+            0.4570457995 * uy * (5.0*zz - 1.0));
+  y3 = vec4(0.3731763326 * uz * (5.0*zz - 3.0),
+            0.4570457995 * ux * (5.0*zz - 1.0),
+            1.4453057213 * uz * (xx - yy),
+            0.5900435899 * ux * (xx - 3.0*yy));
+}
+
+// returns density, and (via out) the angular anomaly ρ/ρ_monopole − 1
+float density(vec3 p, out float anom) {
+  float r = length(p);
+  vec3 n = p / r;
+  vec4 f0,f1,f2,f3, y0,y1,y2,y3;
+  profiles(r, f0,f1,f2,f3);
+  harmonics(n, y0,y1,y2,y3);
+  float mono = f0.x * y0.x;
+  float rest = dot(f0.yzw, y0.yzw) + dot(f1, y1) + dot(f2, y2) + dot(f3, y3);
+  anom = rest / max(mono, 1e-9);
+  return mono + rest;
+}
+
+// scalar the renderer colours by: [0,1] for log density, [-1,1] for either anomaly.
+//   1 = relative, (n−n₀)/n₀ — flat radial weighting, shows shape at every radius
+//   2 = absolute, n−n₀ scaled by the peak density — shows where the atoms are
+float quantity(vec3 p, out float dens) {
+  float anom;
+  dens = density(p, anom);
+  if (uQuantity == 0)
+    return clamp((log(max(dens, 1e-6)) / 2.302585 - uLogLo) / (uLogHi - uLogLo), 0.0, 1.0);
+  if (uQuantity == 1)
+    return clamp(anom / uAnomScale, -1.0, 1.0);
+  float mono = dens / (1.0 + anom);
+  return clamp((dens - mono) / (uAnomScale * uNref), -1.0, 1.0);
+}
+
+// sequential spans [0,1]; diverging spans [-1,1] with the LUT's midpoint at 0
+vec3 colourOf(float q) { return lut(uQuantity == 0 ? q : q * 0.5 + 0.5); }
+
+float gauss(float d, float w) { return exp(-(d*d) / (w*w)); }
+
+// the angular anomaly on one shell, for the deformed-shell mode
+float anomAt(vec3 dir, float r) {
+  vec4 f0,f1,f2,f3, y0,y1,y2,y3;
+  profiles(r, f0,f1,f2,f3);
+  harmonics(normalize(dir), y0,y1,y2,y3);
+  float mono = f0.x * y0.x;
+  float rest = dot(f0.yzw, y0.yzw) + dot(f1, y1) + dot(f2, y2) + dot(f3, y3);
+  return rest / max(mono, 1e-9);
+}
+
+// Headlight, not a scene light. The shading here is a shape cue for surfaces —
+// the brightness of this rendering is density, not scattered sunlight — so the
+// light is tied to the camera (offset up-left to keep relief) rather than to a
+// fixed direction in GSE, which would imply an illumination that isn't there.
+vec3 keyLight() { return normalize(-uFwd + 0.40 * uUp + 0.28 * uRight); }
+
+vec3 lightOf(vec3 n, vec3 rd, vec3 col) {
+  float lam = 0.30 + 0.70 * max(dot(n, keyLight()), 0.0);
+  float rim = pow(1.0 - abs(dot(n, rd)), 2.0);
+  return col * lam + vec3(0.35) * rim * 0.35;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy / uRes) * 2.0 - 1.0;
+  uv.x *= uRes.x / uRes.y;
+  vec3 rd = normalize(uFwd + uTanHalf * (uv.x * uRight + uv.y * uUp));
+  vec3 ro = uRo;
+
+  // ray vs the outer sphere
+  float b = dot(ro, rd), c = dot(ro, ro) - uRmax * uRmax;
+  float disc = b*b - c;
+  if (disc <= 0.0) { fragColor = vec4(uBg, 1.0); return; }
+  float sq = sqrt(disc);
+  float t0 = max(-b - sq, 0.0), t1 = -b + sq;
+  if (t1 <= t0) { fragColor = vec4(uBg, 1.0); return; }
+  float dt = (t1 - t0) / float(uSteps);
+
+/* ── C · column projection: what the instrument actually integrates ──── */
+#if MODE == 2
+  float acc = 0.0, ref = 0.0;
+  for (int i = 0; i < 512; i++) {
+    if (i >= uSteps) break;
+    vec3 p = ro + rd * (t0 + (float(i) + 0.5) * dt);
+    float r = length(p);
+    if (r < uRmin || r > uRmax) continue;
+    float anom;
+    float dens = density(p, anom);
+    float mono = dens / (1.0 + anom);
+    acc += dens * dt;
+    ref += mono * dt;
+  }
+  if (ref <= 0.0) { fragColor = vec4(uBg, 1.0); return; }
+  float q = (uQuantity == 0)
+    ? clamp((log(acc / uColNorm) / 2.302585 + 2.5) / 2.5, 0.0, 1.0)
+    : (uQuantity == 1)
+      ? clamp((acc - ref) / ref / uAnomScale, -1.0, 1.0)          // fractional contrast
+      : clamp((acc - ref) / (uAnomScale * uColNorm), -1.0, 1.0);  // absolute column excess
+  fragColor = vec4(colourOf(q), 1.0);
+  return;
+
+/* ── D · deformed shell: r = Rs·(1 + 0.35·anomaly), the harmonic lobes ── */
+#elif MODE == 3
+  float amp = 0.35 * uRshell;
+  float prev = 0.0;
+  bool have = false;
+  for (int i = 0; i < 512; i++) {
+    if (i >= uSteps) break;
+    float t = t0 + float(i) * dt;
+    vec3 p = ro + rd * t;
+    float a = clamp(anomAt(p, uRshell) / uAnomScale, -1.0, 1.0);
+    float g = length(p) - (uRshell + amp * a);     // signed distance-ish
+    if (have && prev > 0.0 && g <= 0.0) {
+      // bisect for the crossing, then shade with a finite-difference normal
+      float lo = t - dt, hi = t;
+      for (int k = 0; k < 6; k++) {
+        float mid = 0.5 * (lo + hi);
+        vec3 pm = ro + rd * mid;
+        float am = clamp(anomAt(pm, uRshell) / uAnomScale, -1.0, 1.0);
+        if (length(pm) - (uRshell + amp * am) > 0.0) lo = mid; else hi = mid;
+      }
+      vec3 ps = ro + rd * 0.5 * (lo + hi);
+      float e = 0.25;
+      vec3 ex = vec3(e,0.0,0.0), ey = vec3(0.0,e,0.0), ez = vec3(0.0,0.0,e);
+      vec3 gr = vec3(
+        length(ps+ex) - (uRshell + amp*clamp(anomAt(ps+ex,uRshell)/uAnomScale,-1.0,1.0))
+      - length(ps-ex) + (uRshell + amp*clamp(anomAt(ps-ex,uRshell)/uAnomScale,-1.0,1.0)),
+        length(ps+ey) - (uRshell + amp*clamp(anomAt(ps+ey,uRshell)/uAnomScale,-1.0,1.0))
+      - length(ps-ey) + (uRshell + amp*clamp(anomAt(ps-ey,uRshell)/uAnomScale,-1.0,1.0)),
+        length(ps+ez) - (uRshell + amp*clamp(anomAt(ps+ez,uRshell)/uAnomScale,-1.0,1.0))
+      - length(ps-ez) + (uRshell + amp*clamp(anomAt(ps-ez,uRshell)/uAnomScale,-1.0,1.0)));
+      vec3 n = normalize(length(gr) > 1e-8 ? gr : normalize(ps));
+      float dens;
+      float qv = quantity(ps, dens);
+      fragColor = vec4(lightOf(n, rd, colourOf(qv)), 1.0);
+      return;
+    }
+    prev = g; have = true;
+  }
+  fragColor = vec4(uBg, 1.0);
+  return;
+
+/* ── A / B · volume compositing ──────────────────────────────────────── */
+#else
+  vec3 C = vec3(0.0);
+  float A = 0.0;
+
+  for (int i = 0; i < 512; i++) {
+    if (i >= uSteps || A > 0.985) break;
+    float t = t0 + (float(i) + 0.5) * dt;
+    vec3 p = ro + rd * t;
+    float r = length(p);
+
+    // inner boundary: an opaque grey ball stands in for Earth + plasmasphere
+    if (r < uRmin) {
+      vec3 n = normalize(p);
+      float lam = 0.35 + 0.65 * max(dot(n, keyLight()), 0.0);
+      C += (1.0 - A) * vec3(0.42, 0.42, 0.40) * lam;
+      A = 1.0;
+      break;
+    }
+    if (r > uRmax) continue;
+
+    float dens;
+    float q = quantity(p, dens);
+    vec3 col = colourOf(q);
+    float w = 1.0;
+
+#if MODE == 0
+    w = (uQuantity == 0) ? q : abs(q);
+#else
+    float s = (uQuantity == 0) ? q : abs(q);
+    // width tracks each level, so low levels stay as visible as high ones
+    w = gauss(s - uLevels.x, 0.035 * max(uLevels.x / 0.30, 0.5))
+      + gauss(s - uLevels.y, 0.035 * max(uLevels.y / 0.30, 0.5))
+      + gauss(s - uLevels.z, 0.035 * max(uLevels.z / 0.30, 0.5));
+    if (w < 0.01) continue;
+    // gradient normal from central differences on the same scalar
+    float e = 0.35, dd;
+    vec3 ex = vec3(e, 0.0, 0.0), ey = vec3(0.0, e, 0.0), ez = vec3(0.0, 0.0, e);
+    vec3 gr = vec3(
+      quantity(p + ex, dd) - quantity(p - ex, dd),
+      quantity(p + ey, dd) - quantity(p - ey, dd),
+      quantity(p + ez, dd) - quantity(p - ez, dd));
+    vec3 n = normalize(length(gr) > 1e-8 ? -gr : vec3(0.0, 0.0, 1.0));
+    col = lightOf(n, rd, col);
+#endif
+
+    float a = 1.0 - exp(-w * uOpacity * dt);
+    C += (1.0 - A) * col * a;
+    A += (1.0 - A) * a;
+  }
+
+  fragColor = vec4(C + (1.0 - A) * uBg, 1.0);
+#endif
+}`;
+
+/* ══════════════════════════════════════════════════════════════════════
+   GL plumbing — one context per panel, all sharing camera + profile data
+   ══════════════════════════════════════════════════════════════════════ */
+
+function compile(gl, type, src, mode) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src.replace('#version 300 es',
+    '#version 300 es\n#define MODE ' + mode));
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s) + '\n' +
+      src.split('\n').map((l, i) => (i+1) + ': ' + l).join('\n'));
+  return s;
+}
+
+class Panel {
+  constructor(section) {
+    this.mode = +section.dataset.mode;
+    this.cv = section.querySelector('canvas:not(.giz)');
+    this.giz = section.querySelector('canvas.giz');
+    this.hud = section.querySelector('.hud');
+    this.cbar = section.querySelector('.cbar');
+    const gl = this.gl = this.cv.getContext('webgl2', { antialias: false, alpha: false });
+    if (!gl) throw new Error('WebGL2 unavailable');
+
+    const p = this.prog = gl.createProgram();
+    gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, VERT, this.mode));
+    gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, FRAG, this.mode));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    gl.useProgram(p);
+    this.u = {};
+    for (const n of ['uProf','uLut','uRo','uRight','uUp','uFwd','uRes','uTanHalf','uRmin','uRmax',
+                     'uOpacity','uAnomScale','uQuantity','uSteps','uBg','uLogLo','uLogHi',
+                     'uColNorm','uRshell','uNref','uLevels'])
+      this.u[n] = gl.getUniformLocation(p, n);
+
+    this.vao = gl.createVertexArray();
+    const mkTex = filter => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+        gl.texParameteri(gl.TEXTURE_2D, k, filter);
+      for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+        gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+      return t;
+    };
+    this.tex = mkTex(gl.NEAREST);      // profiles: manually interpolated
+    this.lut = mkTex(gl.LINEAR);       // colormap: hardware interpolation
+    gl.uniform1i(this.u.uProf, 0);
+    gl.uniform1i(this.u.uLut, 1);
+  }
+
+  upload(profile) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, NR, 4, 0, gl.RGBA, gl.FLOAT, profile);
+  }
+
+  uploadLUT(data) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.lut);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  }
+
+  draw(cam, opts) {
+    const gl = this.gl, cv = this.cv;
+    const r = cv.parentElement.getBoundingClientRect();
+    // cap the effective factor so a hi-dpi screen doesn't quadruple the cost again
+    const scale = Math.min(opts.scale * (window.devicePixelRatio || 1), 2.0);
+    const w = Math.max(1, Math.round(r.width * scale)), h = Math.max(1, Math.round(r.height * scale));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(this.prog);
+    gl.bindVertexArray(this.vao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.lut);
+
+    gl.uniform3f(this.u.uRo, ...cam.ro);
+    gl.uniform3f(this.u.uRight, ...cam.right);
+    gl.uniform3f(this.u.uUp, ...cam.up);
+    gl.uniform3f(this.u.uFwd, ...cam.fwd);
+    gl.uniform2f(this.u.uRes, w, h);
+    gl.uniform1f(this.u.uTanHalf, cam.tanHalf);
+    gl.uniform1f(this.u.uRmin, RMIN);
+    gl.uniform1f(this.u.uRmax, opts.rout);
+    gl.uniform1f(this.u.uOpacity, opts.opacity);
+    gl.uniform1f(this.u.uAnomScale, opts.anomScale);
+    gl.uniform1i(this.u.uQuantity, opts.quantity);
+    gl.uniform1i(this.u.uSteps, opts.steps);
+    gl.uniform3f(this.u.uBg, ...opts.bg);
+    gl.uniform1f(this.u.uLogLo, opts.logLo);
+    gl.uniform1f(this.u.uLogHi, opts.logHi);
+    gl.uniform1f(this.u.uColNorm, opts.colNorm);
+    gl.uniform1f(this.u.uRshell, opts.rshell);
+    gl.uniform1f(this.u.uNref, opts.nref);
+    gl.uniform3f(this.u.uLevels, ...opts.levels);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   camera + state
+   ══════════════════════════════════════════════════════════════════════ */
+
+const S = {
+  truth: 1, quantity: 0,
+  cmap: { seq: 'Blue (palette)', div: 'Blue–Red (palette)' },
+  logOpacity: -0.6, logAnom: -0.6, rout: 25, rshell: 10, logLev: 0,
+  az: 0.9, el: 0.45, dist: 78,
+  spin: false,
+};
+const DEF = { az: 0.9, el: 0.45, dist: 78 };
+
+function camera() {
+  const ce = Math.cos(S.el), se = Math.sin(S.el);
+  const ca = Math.cos(S.az), sa = Math.sin(S.az);
+  const dir = [ce*ca, ce*sa, se];                  // camera → origin is −dir
+  const ro = dir.map(v => v * S.dist);
+  const fwd = dir.map(v => -v);
+  let up = [0, 0, 1];
+  // right = fwd × up, then up = right × fwd  (Gram–Schmidt against the pole)
+  let right = [fwd[1]*up[2] - fwd[2]*up[1], fwd[2]*up[0] - fwd[0]*up[2], fwd[0]*up[1] - fwd[1]*up[0]];
+  let nr = Math.hypot(...right) || 1;
+  right = right.map(v => v / nr);
+  up = [right[1]*fwd[2] - right[2]*fwd[1], right[2]*fwd[0] - right[0]*fwd[2], right[0]*fwd[1] - right[1]*fwd[0]];
+  return { ro, fwd, right, up, tanHalf: Math.tan(0.36) };
+}
+
+const bgRGB = () => {
+  const c = getComputedStyle(document.documentElement).getPropertyValue('--surface-1').trim();
+  return [1,3,5].map(i => parseInt(c.slice(i, i+2), 16) / 255);
+};
+
+// log range of the monopole across the shell, so the sequential ramp uses it all
+function logRange(c) {
+  const Y00 = 0.28209479177387814, kn = knots.map(Math.log);
+  const y = Array.from({length: K}, (_, k) => c[k]);
+  const y2 = splineY2(kn, Float64Array.from(y));
+  const lo = splineEval(kn, y, y2, Math.log(RMAX)) * Y00;
+  const hi = splineEval(kn, y, y2, Math.log(RMIN)) * Y00;
+  return [Math.log10(Math.max(lo, 1e-6)) - 0.15, Math.log10(Math.max(hi, 1e-5)) + 0.05];
+}
+
+let panels = [], dragging = false, dirty = true, lastT = 0, frames = 0, fpsT = 0;
+
+// the column through the innermost usable impact parameter — the reference the
+// projection mode normalises by, so the sequential ramp spans the real range
+function columnNorm(c) {
+  const kn = knots.map(Math.log), Y00 = 0.28209479177387814;
+  const y = Array.from({length: K}, (_, k) => c[k]);
+  const y2 = splineY2(kn, Float64Array.from(y));
+  const smax = Math.sqrt(RMAX*RMAX - RMIN*RMIN), M = 400, ds = 2 * smax / M;
+  let acc = 0;
+  for (let i = 0; i < M; i++) {
+    const s = -smax + ds * (i + 0.5);
+    const r = clamp(Math.hypot(RMIN, s), RMIN, RMAX);
+    acc += splineEval(kn, y, y2, Math.log(r)) * Y00 * ds;
+  }
+  return acc;
+}
+
+function opts(drag) {
+  const c = TRUTHS[S.truth].c;
+  const [logLo, logHi] = logRange(c);
+  return {
+    scale: drag ? 0.6 : 1.25,
+    steps: drag ? 80 : 170,
+    rout: S.rout,
+    rshell: clamp(S.rshell, RMIN + 0.4, S.rout - 0.4),
+    opacity: Math.pow(10, S.logOpacity),
+    anomScale: Math.pow(10, S.logAnom),
+    quantity: S.quantity,
+    bg: bgRGB(),
+    colNorm: colNormCache,
+    nref: Math.pow(10, logHi),        // peak monopole density, at RMIN
+    levels: isoLevels(),
+    logLo, logHi,
+  };
+}
+
+// Isosurface levels for panel B. The absolute anomaly inherits the monopole's
+// r^-2.75 falloff, so evenly-spaced levels all collapse into a thin skin just
+// outside the inner boundary; geometric spacing puts them at distinct radii
+// (a factor 10 in level ≈ a factor 10^(1/2.75) = 2.3 in radius).
+function isoLevels() {
+  const m = Math.pow(10, S.logLev);
+  const base = S.quantity === 2 ? [0.06, 0.20, 0.66] : [0.30, 0.52, 0.74];
+  return base.map(v => clamp(v * m, 0.004, 0.99));
+}
+let colNormCache = 1;
+
+// small XYZ orientation gizmo, sharing the render camera's screen basis
+function drawGizmo(p, cam) {
+  const cv = p.giz, dpr = window.devicePixelRatio || 1;
+  const s = 78;
+  if (cv.width !== s * dpr) { cv.width = cv.height = s * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, s, s);
+  const cx = s / 2, cy = s / 2, L = 26;
+  const ink = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
+  const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim();
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // GSE: +X sunward, +Y duskward, +Z ecliptic north
+  const axes = [[[1,0,0], '+X'], [[0,1,0], '+Y'], [[0,0,1], '+Z']];
+  // draw far axes first so the near ones overlap correctly
+  const drawn = axes.map(([v, lab]) => {
+    const sx = v[0]*cam.right[0] + v[1]*cam.right[1] + v[2]*cam.right[2];
+    const sy = v[0]*cam.up[0]    + v[1]*cam.up[1]    + v[2]*cam.up[2];
+    const dep = v[0]*cam.fwd[0]  + v[1]*cam.fwd[1]   + v[2]*cam.fwd[2];
+    return { x: cx + sx*L, y: cy - sy*L, dep, lab };
+  }).sort((a, b) => b.dep - a.dep);
+  for (const a of drawn) {
+    ctx.strokeStyle = a.dep > 0 ? muted : ink;
+    ctx.lineWidth = a.dep > 0 ? 1 : 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(a.x, a.y); ctx.stroke();
+    ctx.fillStyle = a.dep > 0 ? muted : ink;
+    const k = 1.28;
+    ctx.fillText(a.lab, cx + (a.x - cx) * k, cy + (a.y - cy) * k);
+  }
+  ctx.fillStyle = muted;
+  ctx.beginPath(); ctx.arc(cx, cy, 1.6, 0, 7); ctx.fill();
+}
+
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (S.spin) { S.az += (t - lastT) * 0.00025; dirty = true; }
+  lastT = t;
+  if (!dirty) return;
+  dirty = false;
+  const cam = camera(), o = opts(dragging);
+  for (const p of panels) { p.draw(cam, o); drawGizmo(p, cam); }
+  frames++;
+  if (t - fpsT > 500) {
+    $('#fps').textContent = (frames * 1000 / (t - fpsT)).toFixed(0) + ' fps · ' +
+      o.steps + ' steps · ' + (o.scale * 100 | 0) + '%';
+    frames = 0; fpsT = t;
+  }
+  if (S.spin) dirty = true;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   UI
+   ══════════════════════════════════════════════════════════════════════ */
+
+function setTruth(i) {
+  S.truth = i;
+  const prof = bakeProfiles(TRUTHS[i].c);
+  colNormCache = columnNorm(TRUTHS[i].c);
+  for (const p of panels) p.upload(prof);
+  updateHud();
+  dirty = true;
+}
+
+const fam = () => S.quantity === 0 ? 'seq' : 'div';
+const syncs = [];                 // slider readouts, refreshed when the mode changes
+
+// rebuild the colormap LUT and push it to every panel
+function setCmap(name) {
+  if (name) S.cmap[fam()] = name;
+  const stops = cmapStops(fam(), S.cmap[fam()]);
+  const data = buildLUT(stops);
+  for (const p of panels) p.uploadLUT(data);
+  const sel = $('#cmap');
+  if (sel) {
+    sel.innerHTML = '';
+    for (const n of Object.keys(CMAPS[fam()])) {
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      sel.appendChild(o);
+    }
+    sel.value = S.cmap[fam()];
+  }
+  for (const s of syncs) s();     // iso levels & anomaly scale read differently per mode
+  updateHud();
+  dirty = true;
+}
+
+function updateHud() {
+  const t = TRUTHS[S.truth];
+  const q = ['log₁₀ n', 'relative anomaly  n/n₀ − 1', 'absolute anomaly  n − n₀'][S.quantity];
+  const a = Math.pow(10, S.logAnom);
+  const nref = Math.pow(10, logRange(TRUTHS[S.truth].c)[1]);
+  const grad = cssGradient(cmapStops(fam(), S.cmap[fam()]));
+  for (const p of panels) {
+    p.hud.textContent = `${t.name}  ·  ${q}`;
+    p.cbar.style.background = grad;
+    let lab = p.cbar.parentElement.querySelectorAll('.cbLab');
+    if (!lab.length) {
+      for (const pos of ['top', 'bottom']) {
+        const d = document.createElement('div');
+        d.className = 'cbLab';
+        d.style[pos] = '8px';
+        p.cbar.parentElement.appendChild(d);
+      }
+      lab = p.cbar.parentElement.querySelectorAll('.cbLab');
+    }
+    if (S.quantity === 0) {
+      const [lo, hi] = logRange(TRUTHS[S.truth].c);
+      lab[0].textContent = hi.toFixed(1); lab[1].textContent = lo.toFixed(1);
+    } else if (S.quantity === 1) {
+      lab[0].textContent = '+' + (100*a).toFixed(0) + '%';
+      lab[1].textContent = '−' + (100*a).toFixed(0) + '%';
+    } else {
+      const d = a * nref;
+      lab[0].textContent = '+' + d.toPrecision(2);
+      lab[1].textContent = '−' + d.toPrecision(2);
+    }
+  }
+}
+
+function buildUI() {
+  const sel = $('#truth');
+  TRUTHS.forEach((t, i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = t.name;
+    o.title = t.note;
+    sel.appendChild(o);
+  });
+  sel.value = S.truth;
+  sel.onchange = () => setTruth(+sel.value);
+
+  const seg = (host, items, get, set) => {
+    host.innerHTML = '';
+    items.forEach(([v, lab]) => {
+      const b = document.createElement('button');
+      b.textContent = lab;
+      b.onclick = () => {
+        set(v);
+        [...host.children].forEach((c, i) => c.classList.toggle('on', get(items[i][0])));
+      };
+      host.appendChild(b);
+    });
+    [...host.children].forEach((c, i) => c.classList.toggle('on', get(items[i][0])));
+  };
+  seg($('#qSeg'), [[0, 'log density'], [1, 'relative anomaly'], [2, 'absolute anomaly']],
+      v => S.quantity === v, v => { S.quantity = v; setCmap(); });
+  $('#cmap').onchange = e => setCmap(e.target.value);
+
+  const bind = (id, key, fmt, after) => {
+    const el = $('#' + id), out = $('#' + id + 'V');
+    const sync = () => { S[key] = +el.value; out.textContent = fmt(+el.value); };
+    el.oninput = () => { sync(); if (after) after(); dirty = true; };
+    syncs.push(sync);
+    sync();
+  };
+  bind('opac',   'logOpacity', v => Math.pow(10, v).toFixed(2));
+  bind('ascale', 'logAnom',    v => '±' + (100 * Math.pow(10, v)).toFixed(0) + '%', updateHud);
+  bind('rout',   'rout',       v => (+v).toFixed(1) + ' Re');
+  bind('rshell', 'rshell',     v => (+v).toFixed(2) + ' Re');
+  bind('lev',    'logLev',     () => isoLevels().map(x => x.toFixed(2)).join(' '));
+
+  $('#spinBtn').onclick = e => {
+    S.spin = !S.spin;
+    e.target.classList.toggle('on', S.spin);
+    dirty = true;
+  };
+  $('#themeBtn').onclick = () => {
+    document.documentElement.dataset.theme =
+      document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    setCmap();                      // palette maps are stepped per surface
+  };
+  $('#resetBtn').onclick = () => { Object.assign(S, DEF); dirty = true; };
+
+  // One drag handler for all four canvases — they share the camera. Pointer
+  // events rather than mouse events, so touch and pen work too; pointer capture
+  // keeps the drag alive outside the canvas without window-level listeners.
+  let down = null, pinch = null;
+  const active = new Map();
+
+  for (const p of panels) {
+    p.cv.addEventListener('pointerdown', ev => {
+      p.cv.setPointerCapture(ev.pointerId);
+      active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (active.size === 1) {
+        down = { x: ev.clientX, y: ev.clientY, az: S.az, el: S.el };
+        dragging = true;
+        p.cv.classList.add('drag');
+      } else if (active.size === 2) {
+        const [a, b] = [...active.values()];
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: S.dist };
+        down = null;                       // two fingers zoom, they don't rotate
+      }
+      ev.preventDefault();
+    });
+
+    p.cv.addEventListener('pointermove', ev => {
+      if (!active.has(ev.pointerId)) return;
+      active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch && active.size >= 2) {
+        const [a, b] = [...active.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d > 4) { S.dist = clamp(pinch.dist * pinch.d / d, 30, 400); dirty = true; }
+        return;
+      }
+      if (!down) return;
+      S.az = down.az - (ev.clientX - down.x) * 0.007;
+      // el↑ raises the camera, so drag-down must lower it: the object then
+      // follows the finger (same convention as the orbit view in resmat.html)
+      S.el = clamp(down.el - (ev.clientY - down.y) * 0.007, -1.45, 1.45);
+      dirty = true;
+    });
+
+    const end = ev => {
+      if (!active.delete(ev.pointerId)) return;
+      if (active.size < 2) pinch = null;
+      if (active.size === 0) {
+        down = null; dragging = false;
+        p.cv.classList.remove('drag');
+      } else {
+        // lifting one finger of a pinch resumes rotation from the other
+        const [a] = [...active.values()];
+        down = { x: a.x, y: a.y, az: S.az, el: S.el };
+        dragging = true;
+      }
+      dirty = true;
+    };
+    p.cv.addEventListener('pointerup', end);
+    p.cv.addEventListener('pointercancel', end);
+
+    p.cv.addEventListener('wheel', ev => {
+      ev.preventDefault();
+      S.dist = clamp(S.dist * Math.exp(ev.deltaY * 0.0012), 30, 400);
+      dirty = true;
+    }, { passive: false });
+  }
+  window.addEventListener('resize', () => { dirty = true; });
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+try {
+  panels = [...document.querySelectorAll('.panel')].map(s => new Panel(s));
+  for (const p of panels) {
+    const gl = p.gl;
+    if (!gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('OES_texture_float_linear')) {
+      // R32F sampling with NEAREST needs no extension on WebGL2 core; ignore
+    }
+  }
+  buildUI();
+  setCmap();
+  setTruth(S.truth);
+  requestAnimationFrame(frame);
+} catch (e) {
+  const d = $('#err');
+  d.style.display = 'block';
+  d.textContent = 'Could not start the 3D view.\n\n' + (e && e.message || e);
+}
+</script>
+</body>
+</html>

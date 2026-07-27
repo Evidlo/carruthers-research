@@ -1,0 +1,1763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carruthers — resolution explorer</title>
+<style>
+:root {
+  color-scheme: light;
+  --page:           #f9f9f7;
+  --surface-1:      #fcfcfb;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --grid:           #e1e0d9;
+  --axis:           #c3c2b7;
+  --border:         rgba(11,11,11,0.10);
+  --series-1:       #2a78d6;
+  --series-2:       #eb6834;
+  --series-3:       #1baf7a;
+  --accent:         #2a78d6;
+  --warn:           #ec835a;
+  --crit:           #d03b3b;
+  --ctl-bg:         #ffffff;
+  --ctl-hover:      #f0efec;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:           #0d0d0d;
+  --surface-1:      #1a1a19;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #898781;
+  --grid:           #2c2c2a;
+  --axis:           #383835;
+  --border:         rgba(255,255,255,0.10);
+  --series-1:       #3987e5;
+  --series-2:       #d95926;
+  --series-3:       #199e70;
+  --accent:         #3987e5;
+  --warn:           #ec835a;
+  --crit:           #d03b3b;
+  --ctl-bg:         #232322;
+  --ctl-hover:      #2f2f2d;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── top bar ─────────────────────────────────────────── */
+#topbar {
+  flex: 0 0 auto;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: flex-start;
+}
+.grp { display: flex; flex-direction: column; gap: 3px; }
+.grp > .lbl {
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.row { display: flex; gap: 6px; align-items: center; }
+.sep { width: 1px; align-self: stretch; background: var(--border); }
+
+select, button, input[type=text] {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--ctl-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--ctl-hover); }
+button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+input[type=range] { accent-color: var(--accent); width: 128px; height: 18px; }
+.val {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  min-width: 62px;
+  font-size: 12px;
+}
+.seg { display: flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.seg button:last-child  { border-radius: 0 5px 5px 0; }
+
+/* ── panel grid ──────────────────────────────────────── */
+#grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+}
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+.panel > h2 {
+  margin: 0;
+  padding: 7px 10px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.panel > h2 .seg { flex: 0 0 auto; }
+.panel > h2 .seg button {
+  font-size: 10px;
+  padding: 1px 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.panel > h2 .note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.cv { flex: 1 1 auto; min-height: 0; position: relative; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#orbit canvas { cursor: grab; }
+#orbit canvas.drag { cursor: grabbing; }
+#cardErr canvas, #rmat canvas { cursor: crosshair; }
+
+.foot {
+  flex: 0 0 auto;
+  padding: 5px 10px 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-variant-numeric: tabular-nums;
+}
+.foot b { font-weight: 600; color: var(--text-primary); }
+
+#tip {
+  position: fixed;
+  pointer-events: none;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 10px rgba(0,0,0,.18);
+  opacity: 0;
+  transition: opacity .08s;
+  z-index: 50;
+  white-space: pre;
+}
+
+#splash {
+  position: fixed; inset: 0;
+  background: var(--page);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 12px; z-index: 100;
+}
+#splash .bar { width: 260px; height: 3px; background: var(--grid); border-radius: 2px; overflow: hidden; }
+#splash .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+#splash .msg { color: var(--text-secondary); font-size: 12px; }
+
+</style>
+</head>
+<body>
+
+<div id="splash">
+  <div style="font-size:15px;font-weight:600">Carruthers resolution explorer</div>
+  <div class="bar"><i id="splashBar"></i></div>
+  <div class="msg" id="splashMsg">generating synthetic operator…</div>
+</div>
+
+<div id="topbar">
+  <div class="grp">
+    <span class="lbl" title="Synthetic exosphere the retrieval is tested against. All share a Zoennchen-like r⁻²·⁷⁵ monopole; the named term is added on top as a fraction of it.">ground truth</span>
+    <select id="truth"></select>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="grp">
+    <span class="lbl" title="Centre of the observation window, as a date in 2026. Combined with duration and num_obs this reproduces load.py: dates = linspace(start, stop, num_obs), snapped to the stored 2-day vantage grid.">window centre</span>
+    <div class="row"><input type="range" id="tCen" min="0" max="364" value="74"><span class="val" id="tCenV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Length of the observation window in days. Short windows give a narrow viewing arc and a worse-conditioned operator; the arc actually spanned is reported under the orbit view.">duration</span>
+    <div class="row"><input type="range" id="tDur" min="1" max="60" value="14" style="width:104px"><span class="val" id="tDurV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Number of requested observation dates across the window. Duplicates after snapping to the vantage grid collapse, exactly as out-of-tolerance dates get dropped in load.py — so the effective vantage count can be lower.">num_obs</span>
+    <div class="row"><input type="range" id="nObs" min="1" max="60" value="14" style="width:96px"><span class="val" id="nObsV"></span></div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="grp">
+    <span class="lbl" title="Which tangent-point radius bands contribute, in Earth radii. This selects rows of the design matrix, so it changes the Gram and hence the whole resolution analysis. At least one band stays selected.">tangent-point range</span>
+    <div class="seg" id="tpSeg"></div>
+  </div>
+
+  <div class="grp">
+    <span class="lbl" title="Highest spherical-harmonic degree fitted. Because the coefficient index is harmonic-major, restricting to l ≤ L is exactly the leading principal submatrix of the stored Gram — no reindexing needed.">max_l</span>
+    <div class="seg" id="lSeg"></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Number of cubic-spline control points in radius, log-spaced from 3 to 25 Re. Unlike max_l this is not a submatrix: each K has its own precomputed Gram.">cpoints (K)</span>
+    <div class="seg" id="kSeg"></div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="grp">
+    <span class="lbl" title="Tikhonov parameter, in units of the mean diagonal of G. R(λ) = V diag(g/(g+λ)) Vᵀ, so dragging this only rescales the eigenvalues — the eigendecomposition is not redone. λ→0 gives R→I (perfect but unstable); λ→∞ gives R→0.">λ (regularization)</span>
+    <div class="row"><input type="range" id="lam" min="-10" max="2" step="0.05" value="-10"><span class="val" id="lamV"></span></div>
+  </div>
+  <div class="grp">
+    <span class="lbl" title="Measurement noise level, relative to the normalised operator. Feeds the variance term only — it has no effect on the bias/resolution error, which is why the two are shown separately.">noise σ</span>
+    <div class="row"><input type="range" id="sig" min="-4" max="0" step="0.05" value="-2"><span class="val" id="sigV"></span></div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="grp">
+    <span class="lbl" title="Which half of the error budget the cardplot renders. bias % is the resolution bias (R−I)c — a repeatable distortion that survives perfect data and depends on the truth. noise σ is the propagated measurement noise — random, truth-independent. total RMS is the two in quadrature. λ trades bias against σ.">cardplot shows</span>
+    <div class="seg" id="modeSeg"></div>
+  </div>
+
+  <div class="grp">
+    <span class="lbl">&nbsp;</span>
+    <div class="row">
+      <button id="themeBtn" title="light / dark">◐</button>
+      <button id="compressBtn" class="on" title="compress the 235 Re sun-line so L1 and the exosphere fit one view">compress x</button>
+    </div>
+  </div>
+</div>
+
+<div id="grid">
+  <section class="panel" id="orbit">
+    <h2 title="Halo orbit near L1 in GSE, with the selected vantages marked and grey FOV cones. Each cone opens at the true 30° FOV half-angle and runs from the spacecraft to just outside the 25 Re shell; the dashed line is the boresight to Earth.">orbit &amp; fields of view <span class="note" id="orbitNote"></span></h2>
+    <div class="cv"><canvas id="cOrbit"></canvas></div>
+    <div class="foot" id="orbitFoot"></div>
+  </section>
+
+  <section class="panel" id="rmat">
+    <h2 title="The model resolution matrix R = (AᵀA + λI)⁻¹AᵀA in coefficient space. Row i shows what the retrieval reports for component i when the truth is a unit of each other component: Rᵢᵢ is how much of itself it recovers, the off-diagonal is what it confuses itself with.">resolution matrix R <span class="note" id="rmatNote">click a diagonal cell to pick a component</span></h2>
+    <div class="cv"><canvas id="cRmat"></canvas></div>
+    <div class="foot" id="rmatFoot"></div>
+  </section>
+
+  <section class="panel" id="cardErr">
+    <h2 title="The error budget on the three cardinal planes. bias % is (R−I)c: the repeatable distortion the geometry and λ impose, which depends on what the truth is and would still be there with perfect noiseless data. noise σ is the measurement noise propagated through the inverse: random, truth-independent, different every realisation. total RMS % is the two in quadrature — the actual expected error. λ trades bias against σ: at λ = 0 the bias vanishes and σ blows up. Colour limits are pinned to a 14-day window so moving the observation controls changes the picture, not the scale.">error — cardinal slices <span class="note" id="cardErrNote">click a pixel for its resolution kernel</span></h2>
+    <div class="cv"><canvas id="cErr"></canvas></div>
+    <div class="foot" id="errFoot"></div>
+  </section>
+
+  <section class="panel" id="cardPsf">
+    <h2 title="The averaging kernel for the clicked point: what mixture of the true density the retrieval actually reports there. A tight kernel peaking on the point means it is well resolved; a broad or displaced one means it is not. Positive = the retrieval adds that neighbourhood into the point; negative = it subtracts it.">resolution kernel at selected point <span class="note" id="cardPsfNote"></span></h2>
+    <div class="cv"><canvas id="cPsf"></canvas></div>
+    <div class="foot" id="psfFoot"></div>
+  </section>
+</div>
+
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════
+   0.  constants & small helpers
+   ══════════════════════════════════════════════════════════════════════ */
+
+const LMAX = 3;                       // harmonics stored: l = 0..3  →  16
+const NH   = (LMAX + 1) * (LMAX + 1);
+const KSET = [4, 6, 8];               // cpoint counts with precomputed Grams
+const RMIN = 3, RMAX = 25;            // Re — grid extent of the fitted region
+const FALLOFF = 2.75;                 // r^-2.75, the exosphere radial slope
+
+// coefficient index convention (must match the python exporter):
+//   i = h*K + k ,  h = l*l + (m+l) ,  k = knot index
+const hIndex = (l, m) => l * l + (m + l);
+const lOf = h => Math.floor(Math.sqrt(h));
+const mOf = h => h - lOf(h) * lOf(h) - lOf(h);
+
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const lerp  = (a, b, t) => a + (b - a) * t;
+const $ = id => document.getElementById(id);
+
+const DAY0 = Date.UTC(2026, 0, 1);
+const dayLabel = d => new Date(DAY0 + d * 864e5).toISOString().slice(0, 10);
+
+/* ══════════════════════════════════════════════════════════════════════
+   1.  colour — diverging (signed), sequential (magnitude)
+       stops from the validated reference palette, stepped per surface
+   ══════════════════════════════════════════════════════════════════════ */
+
+const hex2rgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+
+const RAMPS = {
+  light: {
+    div: [[-1,'#104281'],[-0.55,'#2a78d6'],[-0.18,'#9ec5f4'],[0,'#f0efec'],
+          [0.18,'#f2b3a0'],[0.55,'#d03b3b'],[1,'#6e1414']],
+    seq: [[0,'#f0efec'],[0.25,'#9ec5f4'],[0.5,'#3987e5'],[0.75,'#1c5cab'],[1,'#0d366b']],
+  },
+  dark: {
+    div: [[-1,'#cde2fb'],[-0.55,'#3987e5'],[-0.18,'#1c5cab'],[0,'#383835'],
+          [0.18,'#8f3b2a'],[0.55,'#e05a44'],[1,'#f2b3a0']],
+    seq: [[0,'#232322'],[0.25,'#184f95'],[0.5,'#2a78d6'],[0.75,'#86b6ef'],[1,'#cde2fb']],
+  },
+};
+
+// build a 512-entry LUT once per (theme, kind); sampling it is then a lookup
+function makeLUT(stops) {
+  const N = 512, lut = new Uint8ClampedArray(N * 3);
+  const pts = stops.map(([t, h]) => [t, hex2rgb(h)]);
+  const lo = pts[0][0], hi = pts[pts.length - 1][0];
+  for (let i = 0; i < N; i++) {
+    const t = lo + (hi - lo) * i / (N - 1);
+    let j = 0;
+    while (j < pts.length - 2 && t > pts[j + 1][0]) j++;
+    const u = (t - pts[j][0]) / (pts[j + 1][0] - pts[j][0] || 1);
+    for (let c = 0; c < 3; c++) lut[i * 3 + c] = lerp(pts[j][1][c], pts[j + 1][1][c], clamp(u, 0, 1));
+  }
+  return lut;
+}
+let LUT = {};
+function rebuildLUTs() {
+  const r = RAMPS[theme()];
+  LUT = { div: makeLUT(r.div), seq: makeLUT(r.seq) };
+}
+const theme = () => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// t ∈ [-1,1] for div, [0,1] for seq
+function lutRGB(lut, t, kind) {
+  const u = kind === 'div' ? (clamp(t, -1, 1) + 1) / 2 : clamp(t, 0, 1);
+  const i = Math.round(u * 511) * 3;
+  return [lut[i], lut[i + 1], lut[i + 2]];
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2.  basis — real spherical harmonics l≤3, natural cubic spline in log r
+   ══════════════════════════════════════════════════════════════════════ */
+
+// unit vector (x,y,z) → 16 real orthonormal Y_lm, ordered by hIndex
+function realY(x, y, z, out) {
+  const x2 = x*x, y2 = y*y, z2 = z*z;
+  out[0]  = 0.28209479177387814;
+  out[1]  = 0.4886025119029199 * y;
+  out[2]  = 0.4886025119029199 * z;
+  out[3]  = 0.4886025119029199 * x;
+  out[4]  = 1.0925484305920792 * x * y;
+  out[5]  = 1.0925484305920792 * y * z;
+  out[6]  = 0.31539156525252005 * (3*z2 - 1);
+  out[7]  = 1.0925484305920792 * x * z;
+  out[8]  = 0.5462742152960396 * (x2 - y2);
+  out[9]  = 0.5900435899266435 * y * (3*x2 - y2);
+  out[10] = 2.890611442640554  * x * y * z;
+  out[11] = 0.4570457994644658 * y * (5*z2 - 1);
+  out[12] = 0.3731763325901154 * z * (5*z2 - 3);
+  out[13] = 0.4570457994644658 * x * (5*z2 - 1);
+  out[14] = 1.445305721320277  * z * (x2 - y2);
+  out[15] = 0.5900435899266435 * x * (x2 - 3*y2);
+  return out;
+}
+
+// knot radii: geomspace(RMIN, RMAX, K) — matches SphHarmSplineModel(spacing='log')
+const knotsFor = K => Array.from({length: K},
+  (_, i) => RMIN * Math.pow(RMAX / RMIN, i / (K - 1)));
+
+// natural cubic spline second derivatives for y over nodes t
+function splineY2(t, y) {
+  const n = t.length, y2 = new Float64Array(n), u = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) {
+    const sig = (t[i] - t[i-1]) / (t[i+1] - t[i-1]);
+    const p = sig * y2[i-1] + 2;
+    y2[i] = (sig - 1) / p;
+    u[i] = (y[i+1] - y[i]) / (t[i+1] - t[i]) - (y[i] - y[i-1]) / (t[i] - t[i-1]);
+    u[i] = (6 * u[i] / (t[i+1] - t[i-1]) - sig * u[i-1]) / p;
+  }
+  for (let i = n - 2; i >= 0; i--) y2[i] = y2[i] * y2[i+1] + u[i];
+  return y2;
+}
+function splineEval(t, y, y2, x) {
+  const n = t.length;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (hi + lo) >> 1; if (t[m] > x) hi = m; else lo = m; }
+  const h = t[hi] - t[lo], a = (t[hi] - x) / h, b = (x - t[lo]) / h;
+  return a*y[lo] + b*y[hi] + ((a*a*a - a)*y2[lo] + (b*b*b - b)*y2[hi]) * h*h / 6;
+}
+
+// S[K] evaluated at radius r, via a precomputed table over log r
+const SPLINE_NR = 400;
+const splineTables = new Map();   // K → {logr0, dlogr, tab: Float32Array(NR*K)}
+function splineTable(K) {
+  if (splineTables.has(K)) return splineTables.get(K);
+  const kn = knotsFor(K).map(Math.log);
+  const tab = new Float32Array(SPLINE_NR * K);
+  const logr0 = Math.log(RMIN), dlogr = (Math.log(RMAX) - logr0) / (SPLINE_NR - 1);
+  for (let k = 0; k < K; k++) {
+    const e = new Float64Array(K); e[k] = 1;
+    const y2 = splineY2(kn, e);
+    for (let i = 0; i < SPLINE_NR; i++)
+      tab[i * K + k] = splineEval(kn, e, y2, logr0 + i * dlogr);
+  }
+  const T = { logr0, dlogr, tab, K };
+  splineTables.set(K, T);
+  return T;
+}
+// write S_k(r) into out[0..K)
+function splineAt(T, r, out, off) {
+  const f = clamp((Math.log(r) - T.logr0) / T.dlogr, 0, SPLINE_NR - 1.001);
+  const i = f | 0, u = f - i, K = T.K;
+  for (let k = 0; k < K; k++)
+    out[off + k] = T.tab[i * K + k] * (1 - u) + T.tab[(i + 1) * K + k] * u;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   3.  linear algebra — symmetric eigendecomposition (cyclic Jacobi)
+   ══════════════════════════════════════════════════════════════════════ */
+
+// A: Float64Array(n*n), destroyed. returns {w: eigenvalues, V: eigenvectors (columns)}
+// A must be pre-scaled to O(1) diagonal — the convergence test is relative to
+// that scale, and G built from r^-2.75 line integrals is ~1e-12 raw.
+function jacobiEig(A, n, maxSweeps = 12) {
+  const V = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) V[i * n + i] = 1;
+  for (let sweep = 0; sweep < maxSweeps; sweep++) {
+    let off = 0;
+    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) off += A[p*n+q] * A[p*n+q];
+    if (off < 1e-26 * n * n) break;
+    for (let p = 0; p < n - 1; p++) {
+      for (let q = p + 1; q < n; q++) {
+        const apq = A[p*n+q];
+        if (Math.abs(apq) < 1e-20) continue;
+        const theta = (A[q*n+q] - A[p*n+p]) / (2 * apq);
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta*theta + 1));
+        const c = 1 / Math.sqrt(t*t + 1), s = t * c;
+        for (let i = 0; i < n; i++) {
+          const aip = A[i*n+p], aiq = A[i*n+q];
+          A[i*n+p] = c*aip - s*aiq;
+          A[i*n+q] = s*aip + c*aiq;
+        }
+        for (let i = 0; i < n; i++) {
+          const api = A[p*n+i], aqi = A[q*n+i];
+          A[p*n+i] = c*api - s*aqi;
+          A[q*n+i] = s*api + c*aqi;
+        }
+        for (let i = 0; i < n; i++) {
+          const vip = V[i*n+p], viq = V[i*n+q];
+          V[i*n+p] = c*vip - s*viq;
+          V[i*n+q] = s*vip + c*viq;
+        }
+      }
+    }
+  }
+  const w = new Float64Array(n);
+  for (let i = 0; i < n; i++) w[i] = A[i*n+i];
+  return { w, V };
+}
+
+// y = M x  for symmetric M stored dense n×n
+function matvec(M, x, n, out) {
+  for (let i = 0; i < n; i++) {
+    let s = 0, off = i * n;
+    for (let j = 0; j < n; j++) s += M[off + j] * x[j];
+    out[i] = s;
+  }
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   4.  synthetic data
+       ─ replace everything in this section by a fetch() of the real
+         export; the contract is documented in DATA_CONTRACT below.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const DATA_CONTRACT = `
+{
+  meta:   {lmax, kset:[...], rmin, rmax, cadenceDays, tpBins:[[lo,hi],...],
+           day0:"2026-01-01"},
+  epochs: [{day, pos:[x,y,z] Re GSE, look:[x,y,z] unit, fovDeg, inst}],
+  grams:  { K → Float32Array[nEpoch][nTpBin][ N*(N+1)/2 ] }   N = 16*K,
+          packed upper triangle, row-major:  idx(i<=j) = i*N - i*(i-1)/2 + (j-i)
+  truths: [{name, c: Float64Array(16*Kmax)}]     coefficients, same index order
+}
+`;
+
+const TP_BINS = [[3, 10], [10, 17], [17, 25]];
+const CADENCE = 2;                                  // days between stored epochs
+// the λ slider is log10(λ); its bottom stop is a sentinel meaning literally 0
+const LAM_OFF = -10;
+const lamOf   = v => v <= LAM_OFF ? 0 : Math.pow(10, v);
+const NROW    = 40;                                 // synthetic LOS per epoch/bin
+const NSAMP   = 24;                                 // quadrature points per LOS
+
+const triIdx = (i, j, N) => i * N - (i * (i - 1)) / 2 + (j - i);   // i<=j
+const triLen = N => N * (N + 1) / 2;
+
+let DATA = null;
+
+function makeEpochs() {
+  const eps = [];
+  for (let day = 0; day <= 364; day += CADENCE) {
+    // GSE: Carruthers sits near L1 (~235 Re sunward), on a halo orbit whose
+    // y/z excursion is what gives the retrieval its (very limited) angular arc.
+    const ph = 2 * Math.PI * day / 178;
+    const x = 235 + 3 * Math.cos(ph);
+    const y = 42 * Math.cos(ph);
+    const z = 26 * Math.sin(ph + 0.9) + 6 * Math.sin(2 * Math.PI * day / 365);
+    const n = Math.hypot(x, y, z);
+    eps.push({ day, pos: [x, y, z], look: [-x/n, -y/n, -z/n], fovDeg: 30, inst: 'WFI' });
+  }
+  return eps;
+}
+
+// two unit vectors spanning the sky plane ⟂ p
+function skyBasis(p) {
+  const n = Math.hypot(p[0], p[1], p[2]);
+  const u = [p[0]/n, p[1]/n, p[2]/n];
+  let a = Math.abs(u[2]) < 0.9 ? [0,0,1] : [1,0,0];
+  let e1 = [u[1]*a[2]-u[2]*a[1], u[2]*a[0]-u[0]*a[2], u[0]*a[1]-u[1]*a[0]];
+  const n1 = Math.hypot(e1[0], e1[1], e1[2]);
+  e1 = e1.map(v => v/n1);
+  const e2 = [u[1]*e1[2]-u[2]*e1[1], u[2]*e1[0]-u[0]*e1[2], u[0]*e1[1]-u[1]*e1[0]];
+  return { u, e1, e2 };
+}
+
+// build the Gram block for one epoch / tp-bin / K by actually integrating
+// synthetic lines of sight — this is what makes the fake data behave like the
+// real thing (limited angle ⇒ l>0 suppressed, poor inner-knot coverage).
+function gramBlock(ep, bin, K, out) {
+  const N = NH * K, T = splineTable(K);
+  const { u, e1, e2 } = skyBasis(ep.pos);
+  const Y = new Float64Array(NH), Sv = new Float64Array(K), row = new Float64Array(N);
+  for (let j = 0; j < NROW; j++) {
+    const rtp = bin[0] + (bin[1] - bin[0]) * (j + 0.5) / NROW;
+    const psi = 2 * Math.PI * ((j * 0.61803398875) % 1);
+    const c = Math.cos(psi), s = Math.sin(psi);
+    const tp = [rtp*(c*e1[0] + s*e2[0]), rtp*(c*e1[1] + s*e2[1]), rtp*(c*e1[2] + s*e2[2])];
+    const smax = Math.sqrt(RMAX*RMAX - rtp*rtp), ds = 2 * smax / NSAMP;
+    row.fill(0);
+    for (let q = 0; q < NSAMP; q++) {
+      const t = -smax + ds * (q + 0.5);
+      const px = tp[0] + t*u[0], py = tp[1] + t*u[1], pz = tp[2] + t*u[2];
+      const r = Math.hypot(px, py, pz);
+      if (r < RMIN) continue;
+      realY(px/r, py/r, pz/r, Y);
+      splineAt(T, r, Sv, 0);
+      const w = ds * Math.pow(r, -FALLOFF);
+      for (let h = 0; h < NH; h++) {
+        const yw = w * Y[h], base = h * K;
+        for (let k = 0; k < K; k++) row[base + k] += yw * Sv[k];
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      const ri = row[i];
+      if (ri === 0) continue;
+      let o = triIdx(i, i, N);
+      for (let jj = i; jj < N; jj++) out[o++] += ri * row[jj];
+    }
+  }
+}
+
+function makeTruths(Kmax) {
+  const K = Kmax, kn = knotsFor(K), N = NH * K;
+  const mk = (name, f) => {
+    const c = new Float64Array(NH * Kmax);
+    // monopole: 100 cm⁻³ at 3 Re falling as r^-2.75, expressed in Y00
+    for (let k = 0; k < K; k++)
+      c[hIndex(0,0)*K + k] = 100 * Math.pow(kn[k] / RMIN, -FALLOFF) / 0.28209479177387814;
+    f(c, kn, K);
+    return { name, c };
+  };
+  const add = (c, l, m, K, fn) => { for (let k = 0; k < K; k++) c[hIndex(l,m)*K + k] += fn(k); };
+  const mono = (c, k, K) => c[hIndex(0,0)*K + k];
+
+  return [
+    mk('Zoennchen 2024 (spherical)', () => {}),
+    mk('N–S dipole, 25 % (A10)', (c, kn, K) =>
+        add(c, 1, 0, K, k => 0.25 * mono(c, k, K))),
+    // A11 > 0 puts density sunward; the observed geocorona is enhanced
+    // ANTIsunward (radiation pressure drives H downstream), hence the sign
+    mk('Antisunward dipole, −25 % (A11)', (c, kn, K) =>
+        add(c, 1, 1, K, k => -0.25 * mono(c, k, K))),
+    mk('Dawn–dusk dipole, 25 % (B11)', (c, kn, K) =>
+        add(c, 1, -1, K, k => 0.25 * mono(c, k, K))),
+    mk('Equatorial bulge (A20), 20 %', (c, kn, K) =>
+        add(c, 2, 0, K, k => -0.20 * mono(c, k, K))),
+    mk('Outer-shell dipole only', (c, kn, K) =>
+        add(c, 1, 0, K, k => (kn[k] > 10 ? 0.4 : 0) * mono(c, k, K))),
+    mk('Inner-shell dipole only', (c, kn, K) =>
+        add(c, 1, 0, K, k => (kn[k] < 8 ? 0.4 : 0) * mono(c, k, K))),
+    mk('l = 3 fine structure (A33)', (c, kn, K) =>
+        add(c, 3, 3, K, k => 0.15 * mono(c, k, K))),
+  ];
+}
+
+async function buildSynthetic(progress) {
+  const epochs = makeEpochs();
+  const grams = {};
+  for (const K of KSET) grams[K] = [];
+  const total = epochs.length * KSET.length;
+  let done = 0;
+  for (let e = 0; e < epochs.length; e++) {
+    for (const K of KSET) {
+      const N = NH * K, L = triLen(N);
+      const per = [];
+      for (const bin of TP_BINS) {
+        const blk = new Float32Array(L);
+        const acc = new Float64Array(L);
+        gramBlock(epochs[e], bin, K, acc);
+        blk.set(acc);
+        per.push(blk);
+      }
+      grams[K].push(per);
+      if ((++done & 15) === 0) { await progress(done / total); }
+    }
+  }
+  await progress(1);
+  return {
+    meta: { lmax: LMAX, kset: KSET, rmin: RMIN, rmax: RMAX,
+            cadenceDays: CADENCE, tpBins: TP_BINS, day0: '2026-01-01', synthetic: true },
+    epochs, grams, truths: makeTruths(Math.max(...KSET)),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   5.  state  +  the actual computation
+   ══════════════════════════════════════════════════════════════════════ */
+
+const S = {
+  truth: 0,
+  tCen: 74, tDur: 14, nObs: 14,
+  tp: [0, 1],            // indices into TP_BINS
+  L: 1, K: 8,
+  logLam: LAM_OFF, logSig: -2,
+  mode: 'noise',         // λ defaults to 0, where the bias is identically zero
+  pick: null,            // {x,y,z} field point for the kernel panel
+  comp: null,            // coefficient index highlighted in the R panel
+  compress: true,
+  rot: { az: -0.55, el: 0.42, zoom: 1 },
+};
+
+// the error budget, and nothing else: bias is the repeatable distortion the
+// geometry+λ impose, σ is the random scatter noise gets amplified into, and
+// total is the two in quadrature
+const MODES = [
+  ['fracerr', 'bias %'],
+  ['noise',   'noise σ'],
+  ['total',   'total RMS %'],
+];
+
+// derived, recomputed in stages so a λ drag never redoes the eigendecomposition
+let CUR = {
+  idx: [],        // selected epoch indices
+  N: 0,
+  eig: null,      // {w, V}
+  R: null,        // Float64Array(N*N)
+  cTrue: null, cHat: null, dC: null,
+  varDiagOp: null,
+  key: '', keyL: '',
+};
+
+// dates = linspace(start, stop, num_obs) snapped to the stored epoch grid —
+// the same construction load.py uses, so duplicate snaps collapse exactly the
+// way out-of-tolerance dates get dropped there
+function selectedEpochs() {
+  const n = DATA.epochs.length;
+  const snap = day => clamp(Math.round(day / CADENCE), 0, n - 1);
+  const a = S.tCen - S.tDur / 2, b = S.tCen + S.tDur / 2;
+  const out = new Set();
+  if (S.nObs === 1) out.add(snap(S.tCen));
+  else for (let i = 0; i < S.nObs; i++) out.add(snap(a + (b - a) * i / (S.nObs - 1)));
+  return [...out].sort((x, y) => x - y);
+}
+
+// assemble G for the current (K, L, epochs, tp bins) as a dense N×N
+function assembleG() {
+  const K = S.K, NHsel = (S.L + 1) * (S.L + 1), N = NHsel * K;
+  const Nfull = NH * K, blocks = DATA.grams[K];
+  const G = new Float64Array(N * N);
+  // the fitted coefficients are the *leading* N entries of the stored vector
+  // (index is harmonic-major), so restricting to l ≤ L is exactly the leading
+  // principal submatrix — no reindexing needed.
+  for (const e of CUR.idx) {
+    for (const b of S.tp) {
+      const g = blocks[e][b];
+      for (let i = 0; i < N; i++) {
+        let o = triIdx(i, i, Nfull);
+        for (let j = i; j < N; j++) {
+          const v = g[o++];
+          G[i * N + j] += v;
+          if (j > i) G[j * N + i] += v;
+        }
+      }
+    }
+  }
+  return { G, N };
+}
+
+function recomputeStructure() {
+  CUR.idx = selectedEpochs();
+  const key = [S.K, S.L, S.tp.join(','), CUR.idx.join(',')].join('|');
+  if (key === CUR.key) return false;
+  CUR.key = key;
+  const { G, N } = assembleG();
+  CUR.N = N;
+  // normalise to unit mean diagonal so λ is dimensionless and the Jacobi
+  // convergence test has a scale to be relative to
+  let s = 0;
+  for (let i = 0; i < N; i++) s += G[i*N+i];
+  CUR.gnorm = s / N || 1;
+  for (let i = 0; i < N*N; i++) G[i] /= CUR.gnorm;
+  CUR.eig = jacobiEig(G, N);
+  return true;
+}
+
+function recomputeR() {
+  const N = CUR.N, { w, V } = CUR.eig;
+  const lam = lamOf(S.logLam);               // G is unit-mean-diagonal
+  const R = new Float64Array(N * N);
+  const f = new Float64Array(N), fv = new Float64Array(N);
+  // at λ = 0 the filter is the pseudo-inverse limit: 1 on the range of G, 0 on
+  // its null space.  The floor keeps g/(g+λ) from going 0/0 there.
+  const tol = 1e-12 * Math.max(...w);
+  for (let a = 0; a < N; a++) {
+    const g = Math.max(w[a], 0);
+    const d = Math.max(g + lam, tol);
+    f[a]  = g / d;                         // resolution filter
+    fv[a] = g / (d * d);                   // variance filter (×σ²)
+  }
+  for (let i = 0; i < N; i++) {
+    for (let j = i; j < N; j++) {
+      let s = 0;
+      for (let a = 0; a < N; a++) s += V[i*N+a] * f[a] * V[j*N+a];
+      R[i*N+j] = s; R[j*N+i] = s;
+    }
+  }
+  CUR.R = R;
+  CUR.f = f; CUR.fv = fv;
+
+  // ground truth sliced to the fitted subspace
+  const Kmax = Math.max(...KSET), Ksrc = Kmax;
+  const cFull = DATA.truths[S.truth].c;
+  const c = new Float64Array(N);
+  const knSrc = knotsFor(Ksrc), knDst = knotsFor(S.K);
+  for (let h = 0; h < (S.L+1)*(S.L+1); h++) {
+    // resample the truth's knot values onto this K's knots (log-r spline)
+    const y = new Float64Array(Ksrc);
+    for (let k = 0; k < Ksrc; k++) y[k] = cFull[h*Ksrc + k];
+    const tt = knSrc.map(Math.log), y2 = splineY2(tt, y);
+    for (let k = 0; k < S.K; k++) c[h*S.K + k] = splineEval(tt, y, y2, Math.log(knDst[k]));
+  }
+  CUR.cTrue = c;
+  CUR.cHat = matvec(R, c, N, new Float64Array(N));
+  CUR.dC = new Float64Array(N);
+  for (let i = 0; i < N; i++) CUR.dC[i] = CUR.cHat[i] - c[i];
+}
+
+// m_pᵀ Cov m_p  with Cov = σ² V diag(g/(g+λ)²) Vᵀ.  σ is relative to the
+// normalised operator, so it reads as "noise as a fraction of a unit-norm
+// measurement" until real radiance units are wired in.
+function pointVariance(m) {
+  const N = CUR.N, { V } = CUR.eig, sig = Math.pow(10, S.logSig);
+  let s = 0;
+  for (let a = 0; a < N; a++) {
+    let d = 0;
+    for (let i = 0; i < N; i++) d += V[i*N+a] * m[i];
+    s += d * d * CUR.fv[a];
+  }
+  return sig * sig * s;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   6.  cardinal-plane field evaluation
+   ══════════════════════════════════════════════════════════════════════ */
+
+const PX = 132;                                       // pixels per plane side
+const PLANES = [
+  { name: 'XY  (z=0)', ax: 'X', ay: 'Y', dir: (a, b) => [a, b, 0] },
+  { name: 'XZ  (y=0)', ax: 'X', ay: 'Z', dir: (a, b) => [a, 0, b] },
+  { name: 'YZ  (x=0)', ax: 'Y', ay: 'Z', dir: (a, b) => [0, a, b] },
+];
+const NPX = PLANES.length * PX * PX;
+
+// per-pixel caches: geometry (fixed) and spline values (per K)
+const GEO = { r: new Float32Array(NPX), Y: new Float32Array(NPX * NH),
+              ok: new Uint8Array(NPX), x: new Float32Array(NPX),
+              y: new Float32Array(NPX), z: new Float32Array(NPX) };
+let SPX = null, SPX_K = 0;
+
+(function buildGeo() {
+  const Y = new Float64Array(NH);
+  let p = 0;
+  for (const pl of PLANES) {
+    for (let iy = 0; iy < PX; iy++) {
+      const b = RMAX * (1 - 2 * (iy + 0.5) / PX);
+      for (let ix = 0; ix < PX; ix++, p++) {
+        const a = RMAX * (2 * (ix + 0.5) / PX - 1);
+        const [x, y, z] = pl.dir(a, b);
+        const r = Math.hypot(x, y, z);
+        GEO.r[p] = r; GEO.x[p] = x; GEO.y[p] = y; GEO.z[p] = z;
+        GEO.ok[p] = (r >= RMIN && r <= RMAX) ? 1 : 0;
+        if (!GEO.ok[p]) continue;
+        realY(x/r, y/r, z/r, Y);
+        for (let h = 0; h < NH; h++) GEO.Y[p*NH + h] = Y[h];
+      }
+    }
+  }
+})();
+
+function ensureSplineCache(K) {
+  if (SPX_K === K) return;
+  const T = splineTable(K);
+  SPX = new Float32Array(NPX * K);
+  const tmp = new Float64Array(K);
+  for (let p = 0; p < NPX; p++) {
+    if (!GEO.ok[p]) continue;
+    splineAt(T, GEO.r[p], tmp, 0);
+    for (let k = 0; k < K; k++) SPX[p*K + k] = tmp[k];
+  }
+  SPX_K = K;
+}
+
+// evaluate Σ_h Σ_k c[h*K+k] Y_h S_k over every cardinal-plane pixel
+function evalField(c, out) {
+  const K = S.K, nh = (S.L + 1) * (S.L + 1);
+  ensureSplineCache(K);
+  for (let p = 0; p < NPX; p++) {
+    if (!GEO.ok[p]) { out[p] = NaN; continue; }
+    let s = 0;
+    const yo = p * NH, so = p * K;
+    for (let h = 0; h < nh; h++) {
+      const yh = GEO.Y[yo + h];
+      if (yh === 0) continue;
+      const base = h * K;
+      let t = 0;
+      for (let k = 0; k < K; k++) t += SPX[so + k] * c[base + k];
+      s += yh * t;
+    }
+    out[p] = s;
+  }
+  return out;
+}
+
+// basis vector m_p at an arbitrary field point
+function basisAt(x, y, z, out) {
+  const K = S.K, nh = (S.L + 1) * (S.L + 1), T = splineTable(K);
+  const r = Math.hypot(x, y, z);
+  const Y = new Float64Array(NH), Sv = new Float64Array(K);
+  realY(x/r, y/r, z/r, Y);
+  splineAt(T, clamp(r, RMIN, RMAX), Sv, 0);
+  for (let h = 0; h < nh; h++)
+    for (let k = 0; k < K; k++) out[h*K + k] = Y[h] * Sv[k];
+  return out;
+}
+
+const FIELD = {
+  truth: new Float32Array(NPX), recon: new Float32Array(NPX),
+  err:   new Float32Array(NPX), noise: new Float32Array(NPX),
+  psf:   new Float32Array(NPX),
+};
+
+let noiseDirty = true;
+
+function recomputeFields() {
+  evalField(CUR.cTrue, FIELD.truth);
+  evalField(CUR.cHat,  FIELD.recon);
+  for (let p = 0; p < NPX; p++) FIELD.err[p] = FIELD.recon[p] - FIELD.truth[p];
+  noiseDirty = true;
+}
+
+// σ(p) = sqrt(m_pᵀ Cov m_p) is O(N²) per pixel — 850 Mflop at L=3 — so it is
+// computed lazily (only when a mode needs it) on a stride-2 grid.
+function ensureNoise() {
+  if (!noiseDirty) return;
+  noiseDirty = false;
+  const N = CUR.N, { V } = CUR.eig, K = S.K, nh = (S.L+1)*(S.L+1);
+  const sig2 = Math.pow(10, S.logSig) ** 2;
+  // C = V diag(fv) Vᵀ once, then each pixel is a single quadratic form
+  const C = new Float64Array(N * N);
+  for (let i = 0; i < N; i++) for (let j = i; j < N; j++) {
+    let s = 0;
+    for (let a = 0; a < N; a++) s += V[i*N+a] * CUR.fv[a] * V[j*N+a];
+    C[i*N+j] = s; C[j*N+i] = s;
+  }
+  const m = new Float64Array(N), Cm = new Float64Array(N);
+  const ST = 2;                                   // stride
+  for (let pl = 0; pl < 3; pl++) {
+    const base = pl * PX * PX;
+    for (let iy = 0; iy < PX; iy += ST) {
+      for (let ix = 0; ix < PX; ix += ST) {
+        // sample at the first unmasked pixel of the block, so the annulus edge
+        // doesn't get punched out by a masked representative
+        let p = -1;
+        for (let dy = 0; dy < ST && iy + dy < PX && p < 0; dy++)
+          for (let dx = 0; dx < ST && ix + dx < PX && p < 0; dx++) {
+            const q = base + (iy + dy) * PX + (ix + dx);
+            if (GEO.ok[q]) p = q;
+          }
+        let v = NaN;
+        if (p >= 0) {
+          const yo = p * NH, so = p * K;
+          for (let h = 0; h < nh; h++) {
+            const yh = GEO.Y[yo + h], b = h * K;
+            for (let k = 0; k < K; k++) m[b + k] = yh * SPX[so + k];
+          }
+          matvec(C, m, N, Cm);
+          let s = 0;
+          for (let i = 0; i < N; i++) s += m[i] * Cm[i];
+          v = Math.sqrt(Math.max(0, sig2 * s));
+        }
+        for (let dy = 0; dy < ST && iy + dy < PX; dy++)
+          for (let dx = 0; dx < ST && ix + dx < PX; dx++) {
+            const q = base + (iy + dy) * PX + (ix + dx);
+            FIELD.noise[q] = GEO.ok[q] ? v : NaN;
+          }
+      }
+    }
+  }
+}
+
+// k(q) = b(q)ᵀ R b(p), divided by the λ→0, R=I peak b(p)ᵀb(p) — so 1 means the
+// point is fully recovered, and heights compare between points and across λ.
+// The scale is held at ±1 rather than fitted, so attenuation stays visible.
+function recomputePSF() {
+  if (!S.pick) { FIELD.psf.fill(NaN); return; }
+  const N = CUR.N;
+  const m = new Float64Array(N);
+  basisAt(S.pick[0], S.pick[1], S.pick[2], m);
+  const u = matvec(CUR.R, m, N, new Float64Array(N));   // R symmetric
+  evalField(u, FIELD.psf);
+  let mm = 0;
+  for (let i = 0; i < N; i++) mm += m[i] * m[i];
+  const div = mm || 1;
+  for (let p = 0; p < NPX; p++) FIELD.psf[p] /= div;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   7.  rendering — canvas helpers
+   ══════════════════════════════════════════════════════════════════════ */
+
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const r = cv.parentElement.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(r.width)), h = Math.max(1, Math.floor(r.height));
+  if (cv.width !== w * dpr || cv.height !== h * dpr) {
+    cv.width = w * dpr; cv.height = h * dpr;
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+// ── cardplot: three planes side by side + colourbar ──────────────────
+function drawCardplot(cv, field, opts) {
+  const { ctx, w, h } = fitCanvas(cv);
+  const padL = 6, padR = 84, padT = 16, padB = 20;
+  const availW = w - padL - padR, availH = h - padT - padB;
+  const gap = 8;
+  const side = Math.max(24, Math.min((availW - 2*gap) / 3, availH));
+  const y0 = padT + (availH - side) / 2;
+  const x0 = padL + (availW - (side*3 + gap*2)) / 2;
+
+  // range — 99th percentile, so one hot pixel can't flatten the whole map
+  let lo = opts.lo, hi = opts.hi;
+  if (lo === undefined) {
+    const vals = [];
+    for (let p = 0; p < NPX; p += 3) if (isFinite(field[p])) vals.push(field[p]);
+    if (!vals.length) { lo = 0; hi = 1; }
+    else if (opts.kind === 'div') {
+      const a = vals.map(Math.abs).sort((x, y) => x - y);
+      const q = a[Math.min(a.length - 1, Math.floor(a.length * 0.99))] || 1;
+      lo = -q; hi = q;
+    } else {
+      vals.sort((x, y) => x - y);
+      hi = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.99))] || 1;
+      lo = opts.zeroBase ? 0 : vals[Math.floor(vals.length * 0.01)];
+    }
+  }
+  const lut = LUT[opts.kind];
+  const surf = hex2rgb(css('--surface-1'));
+
+  const img = ctx.createImageData(PX, PX);
+  const dat = img.data;
+  for (let pi = 0; pi < 3; pi++) {
+    const base = pi * PX * PX;
+    for (let i = 0; i < PX * PX; i++) {
+      const v = field[base + i];
+      let r, g, b;
+      if (!isFinite(v)) { [r, g, b] = surf; }
+      else {
+        const t = opts.kind === 'div' ? v / (hi || 1)
+                                      : (v - lo) / ((hi - lo) || 1);
+        [r, g, b] = lutRGB(lut, t, opts.kind);
+      }
+      dat[i*4] = r; dat[i*4+1] = g; dat[i*4+2] = b; dat[i*4+3] = 255;
+    }
+    const off = document.createElement('canvas');
+    off.width = PX; off.height = PX;
+    off.getContext('2d').putImageData(img, 0, 0);
+    const px = x0 + pi * (side + gap);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, px, y0, side, side);
+
+    // frame, axes, earth marker
+    ctx.strokeStyle = css('--axis'); ctx.lineWidth = 1;
+    ctx.strokeRect(px + 0.5, y0 + 0.5, side - 1, side - 1);
+    ctx.strokeStyle = css('--grid');
+    ctx.beginPath();
+    ctx.moveTo(px + side/2, y0); ctx.lineTo(px + side/2, y0 + side);
+    ctx.moveTo(px, y0 + side/2); ctx.lineTo(px + side, y0 + side/2);
+    ctx.stroke();
+    ctx.fillStyle = css('--text-muted');
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(PLANES[pi].name, px + side/2, y0 - 4);
+    ctx.textAlign = 'left';
+    ctx.fillText(PLANES[pi].ax + '→', px + side - 20, y0 + side + 12);
+    ctx.fillText('↑' + PLANES[pi].ay, px + 2, y0 + side + 12);
+
+    // selected point marker
+    if (S.pick && opts.marker !== false) {
+      const proj = [[0,1],[0,2],[1,2]][pi];
+      const other = [2,1,0][pi];
+      if (Math.abs(S.pick[other]) < 1e-6) {
+        const a = S.pick[proj[0]], b = S.pick[proj[1]];
+        const mx = px + side * (a / RMAX + 1) / 2;
+        const my = y0 + side * (1 - (b / RMAX + 1) / 2);
+        ctx.strokeStyle = css('--text-primary'); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(mx, my, 4.5, 0, 7); ctx.stroke();
+        ctx.strokeStyle = css('--surface-1'); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(mx, my, 6, 0, 7); ctx.stroke();
+      }
+    }
+  }
+
+  // colourbar
+  const cbx = w - padR + 12, cbw = 12, cbh = side, cby = y0;
+  const cimg = ctx.createImageData(1, 128);
+  for (let i = 0; i < 128; i++) {
+    const t = 1 - i / 127;
+    const v = opts.kind === 'div' ? (t * 2 - 1) : t;
+    const [r, g, b] = lutRGB(lut, v, opts.kind);
+    cimg.data[i*4] = r; cimg.data[i*4+1] = g; cimg.data[i*4+2] = b; cimg.data[i*4+3] = 255;
+  }
+  const coff = document.createElement('canvas');
+  coff.width = 1; coff.height = 128;
+  coff.getContext('2d').putImageData(cimg, 0, 0);
+  ctx.drawImage(coff, cbx, cby, cbw, cbh);
+  ctx.strokeStyle = css('--axis'); ctx.lineWidth = 1;
+  ctx.strokeRect(cbx + 0.5, cby + 0.5, cbw - 1, cbh - 1);
+  ctx.fillStyle = css('--text-muted');
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  const fmt = opts.fmt || (v => v.toPrecision(2));
+  ctx.fillText(fmt(hi), cbx + cbw + 3, cby + 8);
+  ctx.fillText(fmt(opts.kind === 'div' ? 0 : (lo + hi) / 2), cbx + cbw + 3, cby + cbh/2 + 3);
+  ctx.fillText(fmt(opts.kind === 'div' ? -hi : lo), cbx + cbw + 3, cby + cbh - 2);
+  if (opts.unit) {
+    ctx.save();
+    ctx.translate(cbx + cbw + 40, cby + cbh / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText(opts.unit, 0, 0);
+    ctx.restore();
+  }
+
+  return { x0, y0, side, gap };
+}
+
+// pixel → field point, for click handling
+function cardHit(layout, mx, my) {
+  const { x0, y0, side, gap } = layout;
+  for (let pi = 0; pi < 3; pi++) {
+    const px = x0 + pi * (side + gap);
+    if (mx < px || mx > px + side || my < y0 || my > y0 + side) continue;
+    const a = ((mx - px) / side * 2 - 1) * RMAX;
+    const b = (1 - (my - y0) / side * 2) * RMAX;
+    const pt = PLANES[pi].dir(a, b);
+    const r = Math.hypot(pt[0], pt[1], pt[2]);
+    if (r < RMIN || r > RMAX) return null;
+    const ix = clamp(Math.floor((mx - px) / side * PX), 0, PX - 1);
+    const iy = clamp(Math.floor((my - y0) / side * PX), 0, PX - 1);
+    return { pt, r, plane: pi, idx: pi * PX * PX + iy * PX + ix };
+  }
+  return null;
+}
+
+// ── resolution matrix heatmap ────────────────────────────────────────
+let RMAT_LAYOUT = null;
+function drawRmat(cv) {
+  const { ctx, w, h } = fitCanvas(cv);
+  const N = CUR.N, K = S.K, nh = (S.L + 1) * (S.L + 1);
+  const padL = 30, padT = 14, padR = 56, padB = 26;
+  const side = Math.max(24, Math.min(w - padL - padR, h - padT - padB));
+  const x0 = padL, y0 = padT + Math.max(0, (h - padT - padB - side) / 2);
+
+  let mx = 0;
+  for (let i = 0; i < N*N; i++) mx = Math.max(mx, Math.abs(CUR.R[i]));
+  mx = mx || 1;
+
+  const img = ctx.createImageData(N, N);
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    const [r, g, b] = lutRGB(LUT.div, CUR.R[i*N+j] / mx, 'div');
+    const o = (i * N + j) * 4;
+    img.data[o] = r; img.data[o+1] = g; img.data[o+2] = b; img.data[o+3] = 255;
+  }
+  const off = document.createElement('canvas');
+  off.width = N; off.height = N;
+  off.getContext('2d').putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, x0, y0, side, side);
+
+  // harmonic block boundaries; heavier rule at each l change
+  ctx.lineWidth = 1;
+  for (let hh = 1; hh < nh; hh++) {
+    const t = hh * K / N * side;
+    const isL = lOf(hh) !== lOf(hh - 1);
+    ctx.strokeStyle = isL ? css('--text-muted') : css('--border');
+    ctx.beginPath();
+    ctx.moveTo(x0 + t, y0); ctx.lineTo(x0 + t, y0 + side);
+    ctx.moveTo(x0, y0 + t); ctx.lineTo(x0 + side, y0 + t);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = css('--axis');
+  ctx.strokeRect(x0 + 0.5, y0 + 0.5, side - 1, side - 1);
+
+  // l labels
+  ctx.fillStyle = css('--text-muted');
+  ctx.font = '10px system-ui, sans-serif';
+  for (let l = 0; l <= S.L; l++) {
+    const a = l*l*K / N, b = (l+1)*(l+1)*K / N;
+    const c = (a + b) / 2;
+    ctx.textAlign = 'center';
+    ctx.fillText('l=' + l, x0 + c*side, y0 + side + 12);
+    ctx.save();
+    ctx.translate(x0 - 12, y0 + c*side);
+    ctx.rotate(-Math.PI/2);
+    ctx.fillText('l=' + l, 0, 0);
+    ctx.restore();
+  }
+
+  // highlight the picked component's row
+  if (S.comp !== null && S.comp < N) {
+    const t = (S.comp + 0.5) / N * side;
+    ctx.strokeStyle = css('--text-primary');
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y0 + t - side/N/2, side, side/N);
+    ctx.strokeRect(x0 + t - side/N/2, y0, side/N, side);
+  }
+
+  // colourbar
+  const cbx = x0 + side + 14, cbw = 11;
+  const cimg = ctx.createImageData(1, 128);
+  for (let i = 0; i < 128; i++) {
+    const [r, g, b] = lutRGB(LUT.div, 1 - 2*i/127, 'div');
+    cimg.data[i*4] = r; cimg.data[i*4+1] = g; cimg.data[i*4+2] = b; cimg.data[i*4+3] = 255;
+  }
+  const coff = document.createElement('canvas');
+  coff.width = 1; coff.height = 128;
+  coff.getContext('2d').putImageData(cimg, 0, 0);
+  ctx.drawImage(coff, cbx, y0, cbw, side);
+  ctx.strokeStyle = css('--axis');
+  ctx.strokeRect(cbx + 0.5, y0 + 0.5, cbw - 1, side - 1);
+  ctx.fillStyle = css('--text-muted');
+  ctx.textAlign = 'left';
+  ctx.fillText('+' + mx.toFixed(2), cbx + cbw + 3, y0 + 8);
+  ctx.fillText('0', cbx + cbw + 3, y0 + side/2 + 3);
+  ctx.fillText('−' + mx.toFixed(2), cbx + cbw + 3, y0 + side - 2);
+
+  RMAT_LAYOUT = { x0, y0, side, N };
+}
+
+function rmatHit(mx, my) {
+  if (!RMAT_LAYOUT) return null;
+  const { x0, y0, side, N } = RMAT_LAYOUT;
+  if (mx < x0 || mx > x0 + side || my < y0 || my > y0 + side) return null;
+  const j = clamp(Math.floor((mx - x0) / side * N), 0, N - 1);
+  const i = clamp(Math.floor((my - y0) / side * N), 0, N - 1);
+  return { i, j, v: CUR.R[i*N+j] };
+}
+
+const compLabel = i => {
+  const K = S.K, h = (i / K) | 0, k = i % K;
+  const l = lOf(h), m = mOf(h);
+  const kn = knotsFor(K);
+  return `${m < 0 ? 'B' : 'A'}${l}${Math.abs(m)}  knot ${k} @ ${kn[k].toFixed(1)} Re`;
+};
+
+// ── 3-D orbit view (hand-rolled; no external library) ────────────────
+function proj3(p, rot, cx, cy, sc) {
+  const ca = Math.cos(rot.az), sa = Math.sin(rot.az);
+  const ce = Math.cos(rot.el), se = Math.sin(rot.el);
+  const x1 =  ca*p[0] + sa*p[1];
+  const y1 = -sa*p[0] + ca*p[1];
+  const z1 = p[2];
+  const y2 = ce*y1 - se*z1;
+  const z2 = se*y1 + ce*z1;
+  return [cx + x1 * sc, cy - z2 * sc, y2];
+}
+
+function drawOrbit(cv) {
+  const { ctx, w, h } = fitCanvas(cv);
+  const cx = w * 0.5, cy = h * 0.52;
+  // compress the 235 Re sun-line so L1 and a 25 Re exosphere share one frame:
+  // true scale out to the knee, then linearly squashed, so the exosphere and
+  // the FOV opening angle are both undistorted
+  const KNEE = 30, SQ = 0.12;
+  const squash = p => {
+    if (!S.compress) return p;
+    const ax = Math.abs(p[0]);
+    return [Math.sign(p[0]) * (ax <= KNEE ? ax : KNEE + (ax - KNEE) * SQ), p[1], p[2]];
+  };
+  const extent = S.compress ? 72 : 260;
+  const sc = Math.min(w, h) / (2.3 * extent) * S.rot.zoom;
+  const P = p => proj3(squash(p), S.rot, cx, cy, sc);
+
+  // axes
+  const axes = [[[0,0,0],[60,0,0],'+X sun'], [[0,0,0],[0,45,0],'+Y'], [[0,0,0],[0,0,45],'+Z']];
+  ctx.lineWidth = 1;
+  ctx.font = '10px system-ui, sans-serif';
+  for (const [a, b, lab] of axes) {
+    const A = P(a), B = P(b);
+    ctx.strokeStyle = css('--grid');
+    ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+    ctx.fillStyle = css('--text-muted');
+    ctx.textAlign = 'left';
+    ctx.fillText(lab, B[0] + 3, B[1]);
+  }
+
+  // exosphere shell (RMAX) and earth
+  const E = P([0,0,0]);
+  ctx.strokeStyle = css('--grid');
+  for (const rr of [RMIN, RMAX]) {
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath();
+      for (let i = 0; i <= 64; i++) {
+        const a = 2*Math.PI*i/64;
+        const v = k === 0 ? [rr*Math.cos(a), rr*Math.sin(a), 0]
+                : k === 1 ? [rr*Math.cos(a), 0, rr*Math.sin(a)]
+                          : [0, rr*Math.cos(a), rr*Math.sin(a)];
+        const Q = P(v);
+        i ? ctx.lineTo(Q[0], Q[1]) : ctx.moveTo(Q[0], Q[1]);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = css('--series-1');
+  ctx.beginPath(); ctx.arc(E[0], E[1], 3.5, 0, 7); ctx.fill();
+  ctx.fillStyle = css('--text-muted');
+  ctx.textAlign = 'left';
+  ctx.fillText('Earth', E[0] + 6, E[1] + 3);
+
+  // full orbit track
+  ctx.strokeStyle = css('--axis');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  DATA.epochs.forEach((e, i) => {
+    const Q = P(e.pos);
+    i ? ctx.lineTo(Q[0], Q[1]) : ctx.moveTo(Q[0], Q[1]);
+  });
+  ctx.stroke();
+
+  // selected epochs: marker + FOV cone toward Earth
+  const sel = new Set(CUR.idx);
+  const coneEvery = Math.max(1, Math.ceil(CUR.idx.length / 6));
+  CUR.idx.forEach((ei, n) => {
+    const e = DATA.epochs[ei];
+    const Q = P(e.pos);
+    if (n % coneEvery === 0) {
+      // grey conical shell: apex at the spacecraft, axis nadir (spacecraft →
+      // Earth), opening at the true FOV half-angle. The axis is taken from the
+      // SQUASHED position so it lines up with the Earth as drawn — the true
+      // nadir is within ~11° of −X, so under sun-line compression a cone built
+      // on the true LOS would sit along the X axis and miss the origin by a
+      // wide margin. The rim is then offset to the apex in screen space
+      // (proj3 is linear) rather than squashed again, which would flatten the
+      // cone into a disk.
+      const { u, e1, e2 } = skyBasis(squash(e.pos));
+      const half = e.fovDeg * Math.PI / 180 / 2;
+      const CL = Math.max(Math.hypot(...squash(e.pos)) - RMAX, 10);   // stop just outside the shell
+      const rad = Math.tan(half) * CL;
+      const dP = v => proj3(v, S.rot, 0, 0, sc);      // linear ⇒ a screen delta
+      const NR = 48, rim = [];
+      for (let i = 0; i <= NR; i++) {
+        const a = 2 * Math.PI * i / NR, c = Math.cos(a), s = Math.sin(a);
+        const v = [-u[0]*CL + rad*(c*e1[0] + s*e2[0]),
+                   -u[1]*CL + rad*(c*e1[1] + s*e2[1]),
+                   -u[2]*CL + rad*(c*e1[2] + s*e2[2])];
+        const d = dP(v);
+        rim.push([Q[0] + d[0], Q[1] + d[1]]);
+      }
+      // boresight to Earth, in squashed space so it lands on the origin
+      ctx.save();
+      ctx.setLineDash([2, 4]);
+      ctx.strokeStyle = css('--grid');
+      ctx.beginPath(); ctx.moveTo(Q[0], Q[1]); ctx.lineTo(E[0], E[1]); ctx.stroke();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.moveTo(Q[0], Q[1]);
+      for (const R of rim) ctx.lineTo(R[0], R[1]);
+      ctx.closePath();
+      ctx.fillStyle = theme() === 'dark' ? 'rgba(200,200,196,0.10)' : 'rgba(90,90,86,0.11)';
+      ctx.fill();
+      ctx.strokeStyle = theme() === 'dark' ? 'rgba(200,200,196,0.35)' : 'rgba(90,90,86,0.38)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      rim.forEach((R, i) => i ? ctx.lineTo(R[0], R[1]) : ctx.moveTo(R[0], R[1]));
+      ctx.stroke();
+      // silhouette edges: the two rim points furthest apart in screen space
+      let bi = 0, bj = 0, bd = -1;
+      for (let i = 0; i < NR; i++) for (let j = i + 1; j < NR; j++) {
+        const d = (rim[i][0]-rim[j][0])**2 + (rim[i][1]-rim[j][1])**2;
+        if (d > bd) { bd = d; bi = i; bj = j; }
+      }
+      ctx.beginPath();
+      for (const k of [bi, bj]) { ctx.moveTo(Q[0], Q[1]); ctx.lineTo(rim[k][0], rim[k][1]); }
+      ctx.stroke();
+    }
+    ctx.fillStyle = css('--series-2');
+    ctx.beginPath(); ctx.arc(Q[0], Q[1], 3, 0, 7); ctx.fill();
+    ctx.strokeStyle = css('--surface-1'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(Q[0], Q[1], 3, 0, 7); ctx.stroke();
+  });
+
+  if (S.compress) {
+    ctx.fillStyle = css('--text-muted');
+    ctx.textAlign = 'right';
+    ctx.fillText(`|x| beyond ${KNEE} Re compressed ×${SQ}`, w - 8, h - 6);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   8.  wiring
+   ══════════════════════════════════════════════════════════════════════ */
+
+const cOrbit = $('cOrbit'), cRmat = $('cRmat'), cErr = $('cErr'), cPsf = $('cPsf');
+let errLayout = null, psfLayout = null;
+
+const SCRATCH = new Float32Array(NPX);
+let DISP = null;                     // the currently displayed derived field
+
+// ── fixed colour limits ───────────────────────────────────────────────
+// The scale is taken from a fixed BASE_DUR-day window at a fixed centre with
+// all TP bins, so moving the observation controls changes the picture and not
+// the yardstick.  It does still track λ/σ/truth/L/K: at λ = 0 the bias is
+// identically zero, so any window-independent absolute scale would be blank.
+const BASE_DUR = 14, BASE_CEN = 74, BASE_NOBS = 14;
+const BASE = { key: '', scale: null };
+
+function baselineScales() {
+  const key = [S.L, S.K, S.truth, S.logLam.toFixed(2), S.logSig.toFixed(2)].join('|');
+  if (key === BASE.key) return BASE.scale;
+  BASE.key = key;
+
+  const svS = { tCen: S.tCen, tDur: S.tDur, nObs: S.nObs, tp: S.tp };
+  const svCUR = Object.assign({}, CUR), svDirty = noiseDirty;
+  const svF = { truth: FIELD.truth.slice(), recon: FIELD.recon.slice(),
+                err: FIELD.err.slice(),     noise: FIELD.noise.slice() };
+
+  S.tCen = BASE_CEN; S.tDur = BASE_DUR; S.nObs = BASE_NOBS; S.tp = [0, 1, 2];
+  CUR.key = '';
+  recomputeStructure(); recomputeR(); recomputeFields(); ensureNoise();
+
+  // 99th percentile, matching drawCardplot's autoscale, so one hot pixel at
+  // the mask edge can't flatten every map that follows
+  const bias = [], noise = [], total = [];
+  for (let p = 0; p < NPX; p += 3) {
+    if (!GEO.ok[p]) continue;
+    const t = Math.abs(FIELD.truth[p]) + 1e-12;
+    bias.push(Math.abs(100 * FIELD.err[p] / t));
+    noise.push(FIELD.noise[p]);
+    total.push(100 * Math.hypot(FIELD.err[p], FIELD.noise[p]) / t);
+  }
+  // a zero baseline (λ = 0 ⇒ no bias) would collapse the scale; fall back to 1
+  const q99 = v => (v.sort((a, b) => a - b)[Math.floor(v.length * 0.99)]) || 1;
+  BASE.scale = { fracerr: q99(bias), noise: q99(noise), total: q99(total) };
+
+  Object.assign(S, svS);
+  Object.assign(CUR, svCUR);
+  FIELD.truth.set(svF.truth); FIELD.recon.set(svF.recon);
+  FIELD.err.set(svF.err);     FIELD.noise.set(svF.noise);
+  noiseDirty = svDirty;
+  return BASE.scale;
+}
+
+function fieldForMode() {
+  const eps = 1e-12;
+  const sc = baselineScales();
+  switch (S.mode) {
+    case 'fracerr': {
+      for (let p = 0; p < NPX; p++) SCRATCH[p] = 100 * FIELD.err[p] / (Math.abs(FIELD.truth[p]) + eps);
+      return { f: SCRATCH, kind: 'div', lo: -sc.fracerr, hi: sc.fracerr,
+               unit: '% bias', fmt: v => v.toFixed(0) + '%' };
+    }
+    case 'noise':
+      ensureNoise();
+      return { f: FIELD.noise, kind: 'seq', lo: 0, hi: sc.noise,
+               unit: 'σ (relative)', zeroBase: true, fmt: v => v.toPrecision(2) };
+    case 'total': {
+      ensureNoise();
+      for (let p = 0; p < NPX; p++)
+        SCRATCH[p] = 100 * Math.hypot(FIELD.err[p], FIELD.noise[p]) / (Math.abs(FIELD.truth[p]) + eps);
+      return { f: SCRATCH, kind: 'seq', lo: 0, hi: sc.total,
+               unit: 'RMS %', zeroBase: true, fmt: v => v.toFixed(0) + '%' };
+    }
+  }
+}
+
+function renderAll() {
+  drawOrbit(cOrbit);
+  drawRmat(cRmat);
+  const m = DISP = fieldForMode();
+  errLayout = drawCardplot(cErr, m.f, m);
+  psfLayout = drawCardplot(cPsf, FIELD.psf, {
+    kind: 'div', lo: -1, hi: 1, unit: 'kernel / ideal peak',
+    fmt: v => v.toFixed(1),
+  });
+  renderFooters();
+}
+
+function renderFooters() {
+  const N = CUR.N;
+  const dof = CUR.f.reduce((a, b) => a + b, 0);
+  const d0 = Math.min(...CUR.idx.map(i => DATA.epochs[i].day));
+  const d1 = Math.max(...CUR.idx.map(i => DATA.epochs[i].day));
+  $('orbitFoot').innerHTML =
+    `<span><b>${CUR.idx.length}</b> vantages</span>` +
+    `<span>${dayLabel(d0)} → ${dayLabel(d1)}</span>` +
+    `<span>arc <b>${arcDeg().toFixed(2)}°</b></span>`;
+  $('orbitNote').textContent = 'drag to rotate · wheel to zoom';
+
+  // resolution stats
+  let unres = 0;
+  for (let i = 0; i < N; i++) unres += 1 - CUR.R[i*N+i];
+  const w = CUR.eig.w;
+  const wmax = Math.max(...w), wmin = Math.max(1e-30, Math.min(...w.filter(v => v > 0)));
+  let s = `<span>eff. DOF tr(R) = <b>${dof.toFixed(1)}</b> (${(100*dof/N).toFixed(0)}%)</span>` +
+          `<span>cond = <b>${Math.sqrt(wmax/wmin).toExponential(1)}</b></span>` +
+          `<span>mean unresolved <b>${(100*unres/N).toFixed(0)}%</b></span>`;
+  if (S.comp !== null && S.comp < N) {
+    const i = S.comp;
+    let offmass = 0;
+    for (let j = 0; j < N; j++) if (j !== i) offmass += Math.abs(CUR.R[i*N+j]);
+    // biggest confuser
+    let best = -1, bv = 0;
+    for (let j = 0; j < N; j++) if (j !== i && Math.abs(CUR.R[i*N+j]) > bv) { bv = Math.abs(CUR.R[i*N+j]); best = j; }
+    s += `<span style="flex-basis:100%"></span>` +
+         `<span><b>${compLabel(i)}</b></span>` +
+         `<span>R<sub>ii</sub> = <b>${CUR.R[i*N+i].toFixed(3)}</b> (${(100*(1-CUR.R[i*N+i])).toFixed(0)}% unresolved)</span>` +
+         `<span>Σ|off| = <b>${offmass.toFixed(3)}</b></span>` +
+         (best >= 0 ? `<span>worst confuser <b>${compLabel(best)}</b> at ${CUR.R[i*N+best].toFixed(3)}</span>` : '');
+  }
+  $('rmatFoot').innerHTML = s;
+
+  // error stats over the field
+  let se = 0, st = 0;
+  for (let p = 0; p < NPX; p++) {
+    if (!GEO.ok[p]) continue;
+    se += FIELD.err[p]**2; st += FIELD.truth[p]**2;
+  }
+  $('errFoot').innerHTML =
+    `<span>bias RMS <b>${(100*Math.sqrt(se/st)).toFixed(2)}%</b> of truth</span>` +
+    `<span>σ = ${(Math.pow(10,S.logSig)).toExponential(1)}</span>`;
+
+  if (S.pick) {
+    const m = basisAt(S.pick[0], S.pick[1], S.pick[2], new Float64Array(N));
+    $('psfFoot').innerHTML =
+      `<span>σ at point <b>${Math.sqrt(pointVariance(m)).toPrecision(3)}</b> cm⁻³</span>`;
+    $('cardPsfNote').textContent = 'what the retrieval actually averages to report this point';
+  } else {
+    $('psfFoot').innerHTML = `<span>click a pixel in the error cardplot</span>`;
+    $('cardPsfNote').textContent = '';
+  }
+}
+
+function arcDeg() {
+  // angular spread of the vantage direction over the selected epochs
+  let mx = 0;
+  for (const a of CUR.idx) for (const b of CUR.idx) {
+    const p = DATA.epochs[a].pos, q = DATA.epochs[b].pos;
+    const np = Math.hypot(...p), nq = Math.hypot(...q);
+    const d = (p[0]*q[0] + p[1]*q[1] + p[2]*q[2]) / (np*nq);
+    mx = Math.max(mx, Math.acos(clamp(d, -1, 1)));
+  }
+  return mx * 180 / Math.PI;
+}
+
+// ── update pipeline ─────────────────────────────────────────────────
+const RANK = { draw: 0, field: 1, lam: 2, struct: 3 };
+let pendingLevel = 'draw', scheduled = false;
+function update(level) {
+  // coalesce within a frame, keeping the deepest level requested
+  if (RANK[level] > RANK[pendingLevel]) pendingLevel = level;
+  if (scheduled) return;
+  scheduled = true;
+  requestAnimationFrame(() => {
+    const lv = pendingLevel;
+    scheduled = false; pendingLevel = 'draw';
+    if (lv === 'struct') recomputeStructure();
+    if (RANK[lv] >= RANK.lam) { recomputeR(); recomputeFields(); recomputePSF(); }
+    else if (lv === 'field') { noiseDirty = true; recomputePSF(); }
+    renderAll();
+  });
+}
+
+// ── controls ────────────────────────────────────────────────────────
+function buildControls() {
+  const tsel = $('truth');
+  DATA.truths.forEach((t, i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = t.name;
+    tsel.appendChild(o);
+  });
+  tsel.value = S.truth;
+  tsel.onchange = () => { S.truth = +tsel.value; update('lam'); };
+
+  const seg = (host, items, get, set) => {
+    host.innerHTML = '';
+    items.forEach(([v, lab]) => {
+      const b = document.createElement('button');
+      b.textContent = lab;
+      b.onclick = () => { set(v); [...host.children].forEach((c, i) => c.classList.toggle('on', get(items[i][0]))); };
+      host.appendChild(b);
+    });
+    [...host.children].forEach((c, i) => c.classList.toggle('on', get(items[i][0])));
+  };
+
+  seg($('tpSeg'), [[0,'3–10'],[1,'10–17'],[2,'17–25']],
+      v => S.tp.includes(v),
+      v => {
+        const i = S.tp.indexOf(v);
+        if (i >= 0 && S.tp.length > 1) S.tp.splice(i, 1);
+        else if (i < 0) S.tp.push(v);
+        S.tp.sort();
+        update('struct');
+      });
+
+  seg($('lSeg'), [[0,'0'],[1,'1'],[2,'2'],[3,'3']],
+      v => S.L === v, v => { S.L = v; update('struct'); });
+
+  seg($('kSeg'), KSET.map(k => [k, '' + k]),
+      v => S.K === v, v => { S.K = v; SPX_K = 0; update('struct'); });
+
+  seg($('modeSeg'), MODES,
+      v => S.mode === v, v => { S.mode = v; update('draw'); });
+
+  const bind = (id, key, fmt, level) => {
+    const el = $(id), out = $(id + 'V');
+    const sync = () => { S[key] = +el.value; out.textContent = fmt(+el.value); };
+    el.oninput = () => { sync(); update(level); };
+    sync();
+  };
+  bind('tCen',   'tCen',   v => dayLabel(v).slice(5), 'struct');
+  bind('tDur',   'tDur',   v => v + (v == 1 ? ' day' : ' days'), 'struct');
+  bind('nObs',   'nObs',   v => v + ' obs',           'struct');
+  bind('lam',    'logLam', v => v <= LAM_OFF ? '0 (off)' : '1e' + v.toFixed(1), 'lam');
+  bind('sig',    'logSig', v => '1e' + v.toFixed(1),  'field');
+
+  $('themeBtn').onclick = () => {
+    document.documentElement.dataset.theme = theme() === 'dark' ? 'light' : 'dark';
+    rebuildLUTs();
+    update('draw');
+  };
+  $('compressBtn').onclick = () => {
+    S.compress = !S.compress;
+    $('compressBtn').classList.toggle('on', S.compress);
+    update('draw');
+  };
+}
+
+// ── interaction ─────────────────────────────────────────────────────
+const tip = $('tip');
+function showTip(ev, text) {
+  tip.textContent = text;
+  tip.style.left = (ev.clientX + 14) + 'px';
+  tip.style.top  = (ev.clientY + 14) + 'px';
+  tip.style.opacity = 1;
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+function localXY(cv, ev) {
+  const r = cv.getBoundingClientRect();
+  return [ev.clientX - r.left, ev.clientY - r.top];
+}
+
+cErr.addEventListener('mousemove', ev => {
+  if (!errLayout) return;
+  const [x, y] = localXY(cErr, ev);
+  const hit = cardHit(errLayout, x, y);
+  if (!hit || !DISP) return hideTip();
+  const v = DISP.f[hit.idx];
+  showTip(ev, `(${hit.pt.map(q => q.toFixed(1)).join(', ')}) Re   r=${hit.r.toFixed(1)}\n` +
+              `${DISP.unit}: ${isFinite(v) ? v.toPrecision(3) : '—'}`);
+});
+cErr.addEventListener('mouseleave', hideTip);
+cErr.addEventListener('click', ev => {
+  if (!errLayout) return;
+  const [x, y] = localXY(cErr, ev);
+  const hit = cardHit(errLayout, x, y);
+  if (!hit) return;
+  S.pick = hit.pt;
+  recomputePSF();
+  renderAll();
+});
+
+cRmat.addEventListener('mousemove', ev => {
+  const [x, y] = localXY(cRmat, ev);
+  const hit = rmatHit(x, y);
+  if (!hit) return hideTip();
+  showTip(ev, `row  ${compLabel(hit.i)}\ncol  ${compLabel(hit.j)}\nR = ${hit.v.toFixed(4)}`);
+});
+cRmat.addEventListener('mouseleave', hideTip);
+cRmat.addEventListener('click', ev => {
+  const [x, y] = localXY(cRmat, ev);
+  const hit = rmatHit(x, y);
+  if (!hit) return;
+  S.comp = hit.i;
+  renderAll();
+});
+
+// pointer events, not mouse events, so drag and pinch work on touch too
+(function orbitDrag() {
+  let down = null, pinch = null;
+  const active = new Map();
+
+  cOrbit.addEventListener('pointerdown', ev => {
+    cOrbit.setPointerCapture(ev.pointerId);
+    active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (active.size === 1) {
+      down = { x: ev.clientX, y: ev.clientY, az: S.rot.az, el: S.rot.el };
+      cOrbit.classList.add('drag');
+    } else if (active.size === 2) {
+      const [a, b] = [...active.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: S.rot.zoom };
+      down = null;
+    }
+    ev.preventDefault();
+  });
+
+  cOrbit.addEventListener('pointermove', ev => {
+    if (!active.has(ev.pointerId)) return;
+    active.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch && active.size >= 2) {
+      const [a, b] = [...active.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d > 4) { S.rot.zoom = clamp(pinch.zoom * d / pinch.d, 0.3, 12); drawOrbit(cOrbit); }
+      return;
+    }
+    if (!down) return;
+    S.rot.az = down.az + (ev.clientX - down.x) * 0.008;
+    S.rot.el = clamp(down.el - (ev.clientY - down.y) * 0.008, -1.5, 1.5);
+    drawOrbit(cOrbit);
+  });
+
+  const end = ev => {
+    if (!active.delete(ev.pointerId)) return;
+    if (active.size < 2) pinch = null;
+    if (active.size === 0) { down = null; cOrbit.classList.remove('drag'); }
+    else { const [a] = [...active.values()]; down = { x: a.x, y: a.y, az: S.rot.az, el: S.rot.el }; }
+  };
+  cOrbit.addEventListener('pointerup', end);
+  cOrbit.addEventListener('pointercancel', end);
+
+  cOrbit.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    S.rot.zoom = clamp(S.rot.zoom * Math.exp(-ev.deltaY * 0.0015), 0.3, 12);
+    drawOrbit(cOrbit);
+  }, { passive: false });
+})();
+
+let rsz;
+window.addEventListener('resize', () => {
+  clearTimeout(rsz);
+  rsz = setTimeout(() => renderAll(), 80);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+   9.  boot
+   ══════════════════════════════════════════════════════════════════════ */
+
+async function tryFetchReal() {
+  try {
+    const r = await fetch('resmat_data.json', { cache: 'no-cache' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    // rehydrate typed arrays
+    for (const K of Object.keys(j.grams))
+      j.grams[K] = j.grams[K].map(e => e.map(b => Float32Array.from(b)));
+    j.truths = j.truths.map(t => ({ ...t, c: Float64Array.from(t.c) }));
+    return j;
+  } catch (e) { return null; }
+}
+
+(async function boot() {
+  rebuildLUTs();
+  const bar = $('splashBar'), msg = $('splashMsg');
+
+  msg.textContent = 'looking for resmat_data.json…';
+  const real = await tryFetchReal();
+  if (real) {
+    DATA = real;
+  } else {
+    msg.textContent = 'generating synthetic operator…';
+    DATA = await buildSynthetic(async t => {
+      bar.style.width = (t * 100).toFixed(0) + '%';
+      await new Promise(r => setTimeout(r, 0));
+    });
+  }
+
+  buildControls();
+  recomputeStructure();
+  recomputeR();
+  recomputeFields();
+  // start with a sensible pick so the kernel panel isn't blank
+  S.pick = [8, 0, 0];
+  recomputePSF();
+  $('splash').remove();
+  renderAll();
+})();
+</script>
+</body>
+</html>
