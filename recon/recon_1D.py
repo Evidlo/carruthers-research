@@ -32,18 +32,18 @@ d = {'device': 'cuda'}
 
 datapath = Path('/data-products')
 
-# desc = 'january'
+# desc = 'january_wfi_newgrid'
 # start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-# desc = 'march_quiet'
+# desc = 'march_quiet_wfi_newgrid'
 # start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
 # end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
-# desc = 'march_storm'
-# start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
-desc = 'march_complete'
-start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-04-01').astype('datetime64[ns]').astype(float)
+desc = 'march_storm_wfi_newgrid'
+start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+# desc = 'march_complete_wfi_newgrid'
+# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-04-01').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=50).astype('datetime64[ns]')
 
@@ -52,7 +52,10 @@ nfi, wfi, dates = load(datapath, dates)
 N = len(dates)
 
 # (date, camera) pairs, mirroring the leading axes of the zipped rvg below
-ims = list(zip(nfi.images.values, wfi.images.values))
+ims = list(zip(
+    # nfi.images.values,
+    wfi.images.values
+))
 
 # %% forward model
 
@@ -61,13 +64,14 @@ ims = list(zip(nfi.images.values, wfi.images.values))
 # plotting read only the spatial dims
 rgrid = DefaultGrid(
     (N, 200, 45, 60), size_r=(3, 25), spacing='log',
-    t=dates, timeunit='ns',
+    t=dates, timeunit='ns'
 )
 
-# zip the two cameras onto a new axis
+# zip the two cameras onto a new axis.  masklim pins the fitted pixels to the grid
+# extent; the analytic tail (ForwardSph tail_slope) supplies signal beyond it
 rvg = ZippedGeom(
-    sum([ScienceGeomFast(s, (100, 50), **d) for s in nfi.scraft.values]),
-    sum([ScienceGeomFast(s, (100, 50), **d) for s in wfi.scraft.values]),
+    # sum([ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in nfi.scraft.values]),
+    sum([ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in wfi.scraft.values]),
 )
 
 ralbedo=Albedo(
@@ -78,6 +82,7 @@ f = ForwardSph(
     rgrid=rgrid, rvg=rvg,
     g_factor=g(11e11),
     ralbedo=ralbedo(),
+    tail_slope=2.75,
     **d
 )
 f.op.regs = None
@@ -88,15 +93,20 @@ t.cuda.empty_cache()
 meas = f.calibrate(ims, disable_noise=True)
 
 
-mr = SphHarmSplineModel(rgrid, max_l=0, cpoints=8, spacing='log', **d)
+mr = SphHarmSplineModel(
+    rgrid,
+    max_l=0,
+    cpoints=8, spacing='log',
+    **d
+)
 
 loss_fns = [
     # 1 * AbsLoss(mask=f.rmask),
     # 1 * SquareLoss(mask=f.rmask),
     1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
-    # 1e5 * DiffLoss(rgrid),
-    # 2e4 * DiffLoss(rgrid),            # radial smoothness (was 5e2)
+    # 11.2 * DiffLoss(rgrid),           # = old 1e5; DiffLoss now /Δlog r, (3,25)x200
+    # 2.25 * DiffLoss(rgrid),           # radial smoothness (= old 2e4)
 ]
 
 open('/tmp/losses_storm.txt', 'w').close()
@@ -104,7 +114,7 @@ open('/tmp/losses_storm.txt', 'w').close()
 initcoeffs = t.zeros((N, *mr.coeffs_shape), **d)
 
 coeffs, retrieved_meas, losses = gd(
-    f, t.nan_to_num(meas), mr, lr=5e1,
+    f, t.nan_to_num(meas), mr, lr=1e1,
     loss_fns=loss_fns, num_iterations=1000,
     coeffs=initcoeffs,
     callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],

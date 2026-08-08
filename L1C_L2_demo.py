@@ -1,138 +1,194 @@
 #!/usr/bin/env python3
+"""L1C -> L2 demo: 1D retrieval, dumped to a pkl, replotted from the pkl alone.
 
 """
-Demo of production L1C to L2 optically thin retrieval
 
-Includes extra code which will be provided in L1C to be removed
-in production (marked with FIXME)
-"""
+from glide.science.forward_sph import *
+from glide.science.model_sph import *
+from glide.science.plotting_sph import *
+from glide.science.recon.loss_sph import *
+from glide.science.common import wipe_gpu
+from glide.calibration.column_density import solar_flux_to_g_factor as g
 
-from glide.science.forward_sph import ForwardSph, ScienceGeomFast
-from glide.science.model_sph import DefaultGrid, SphHarmSplineModel
-from glide.science.plotting import loss_plot, sphharmplot
-from glide.science.plotting_sph import carderr, cardplot, carderrmin, cardplotaxes
-from glide.science.recon.loss_sph import SphHarmL1Regularizer, ReqErr
+from pathlib import Path
 
-from sph_raytracer.retrieval import gd
-from sph_raytracer.loss import AbsLoss, NegRegularizer
+from tomosphero import ZippedGeom
+from tomosphero.plotting import *
+from tomosphero.retrieval import gd, LogCallback
+from tomosphero.loss import *
 
-device = 'cuda'
-
-# FIXME: remove this section for production, `sc` `ralbedo` `g_factor` and `meas_L1C` generated externally
-# ----- Truth Density and Spacecraft Generation -----
-
-from glide.common_components.camera import CameraWFI, CameraNFI, CameraL1BWFI, CameraL1BNFI
-from glide.common_components.cam import nadir_wfi_mode, nadir_nfi_mode
-from glide.common_components.generate_view_geom import gen_mission
-from glide.science.model_sph import Zoennchen24Model, Pratik25Model, TIMEGCMModel
-from glide.science.forward_sph import Albedo
-
+import pickle
+import numpy as np
+import xarray as xr
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib_torch
+matplotlib_torch.activate()
 import torch as t
 
-t_op = 360 # minutes
-cams = [CameraL1BNFI(nadir_nfi_mode(t_op=t_op)), CameraL1BWFI(nadir_wfi_mode(t_op=t_op))]
-sc = gen_mission(num_obs=1, duration=1, start='2025-12-24', cams=cams)
+wipe_gpu()
 
+d = {'device': 'cuda'}
 
-# choose a dataset to reconstruct
-sgrid = DefaultGrid((500, 45, 60), size_r=(3, 25), spacing='log')
-truth_model = (
-    Zoennchen24Model(grid=sgrid, device=device)
-    # Pratik25Model(grid=sgrid, num_times=1, device=device)
-    # TIMEGCMModel(grid=sgrid, device=device, offset=10, fill_value='nearest')
+# %% load measurements
+
+# FIXME: -----------------------------------------
+# FIXME: Inputs supplied by L1C pipeline
+# FIXME: -----------------------------------------
+
+datapath = Path('/data-products')
+
+# desc = 'january_wfi_newgrid'
+# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
+# desc = 'march_quiet_wfi_newgrid'
+# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
+desc = 'march_storm_wfi_analytic_builtin'
+start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
+# desc = 'march_complete_wfi_newgrid'
+# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-04-01').astype('datetime64[ns]').astype(float)
+# desc = 'march_8_wfi_newgrid'
+# start = np.datetime64('2026-03-08').astype('datetime64[ns]').astype(float)
+# end = np.datetime64('2026-03-09').astype('datetime64[ns]').astype(float)
+
+dates = np.linspace(start, end, num_obs:=50).astype('datetime64[ns]')
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent / 'recon'))
+from load import load
+nfi, wfi, dates = load(datapath, dates)
+
+# per-camera lists.  ims is (date, camera) pairs, mirroring the leading axes of
+# the zipped rvg below
+scraft = [
+    # nfi.scraft.values,
+    wfi.scraft.values,
+]
+ims = list(zip(
+    # nfi.images.values,
+    wfi.images.values
+))
+
+albedo_data = xr.open_mfdataset(
+    '/home/jackson/glide-sdc/glide/validation/radiative_transfer/pipeline_test/albedo_data_*.nc'
 )
-# compute ground truth density
-truth = truth_model()
+solar_flux = 11e11
 
-salbedo = Albedo(sgrid, device=device)()
-sg_factor = t.ones(1) * 2.09e-3
+# FIXME: -----------------------------------------
+# FIXME: Begin reconstruction code
+# FIXME: -----------------------------------------
 
-# compute L1C measurements
-f_truth = ForwardSph(
-    sc, sgrid=sgrid, device=device,
-    salbedo=salbedo, g_factor=sg_factor,
+# %% forward model
+
+N = len(dates)
+
+# leading N axis puts the operator in dynamic mode, so each density slice maps
+# to one date's NFI+WFI pair instead of broadcasting across all views. Model and
+# plotting read only the spatial dims
+rgrid = DefaultGrid(
+    (N, 200, 45, 60), size_r=(3, 25), spacing='log',
+    t=dates, timeunit='ns'
 )
-meas_L1C = f_truth.simulate(truth)
 
-rgrid = DefaultGrid((len(sc), 200, 45, 60), size_r=(3, 25), spacing='log')
-# dynamic albedo, g_factor
-# dynamic albedo should be shape (N, 200, 45, 60)
-ralbedo = Albedo(rgrid, device=device)().repeat(len(sc), 1, 1, 1)
-# dynamic g_factor should be shape (N, 1, 1)
-g_factor = t.ones(len(sc), device=device)[:, None, None] * 2.09e-3
+# zip the cameras onto a new axis.  masklim pins the fitted pixels to the grid
+# extent; the analytic tail (ForwardSph tail_slope) supplies signal beyond it
+rvg = ZippedGeom(*[
+    sum([ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in cam])
+    for cam in scraft
+])
 
-# ----- Retrieval -----
-# %% retrieval
-
-# set up reconstruction model
-recon_model = SphHarmSplineModel(rgrid, max_l=0, device=device, cpoints=16, spacing='log')
-
-# set up forward operator with appropriate view geometry and grid
+ralbedo=Albedo(albedo_data, rgrid, **d)
 f = ForwardSph(
-    sc, rgrid=recon_model.grid,
-    ralbedo=ralbedo, g_factor=g_factor,
-    # rvg=sum([ScienceGeom(s, (100, 50)) for s in sc]),
-    rvg=sum([ScienceGeomFast(s, (100, 50)) for s in sc]),
-    device=device
+    rgrid=rgrid, rvg=rvg,
+    g_factor=g(solar_flux),
+    ralbedo=ralbedo(),
+    tail_slope=2.75,
+    **d
+)
+f.op.regs = None
+t.cuda.empty_cache()
+
+# calibrate() bins the L1C images and converts to the retrieval's native units
+# (atom·Re/cm³). It assumes Rayleigh input (×1e6)
+meas = f.calibrate(ims, disable_noise=True)
+
+
+mr = SphHarmSplineModel(
+    rgrid,
+    max_l=0,
+    cpoints=8, spacing='log',
+    **d
 )
 
-# calibrate and bin measurements to science pixel column densities
-meas = f.calibrate(meas_L1C)
-
-# choose loss functions and regularizers with weights
 loss_fns = [
-    1 * AbsLoss(projection_mask=f.proj_maskb),
-    1e4 * NegRegularizer(),
-    1e1 * SphHarmL1Regularizer(recon_model),
-    # FIXME: remove this line for production, no access to ground truth
-    ReqErr(truth, truth_model.grid, recon_model.grid, interval=100),
+    # 1 * AbsLoss(mask=f.rmask),
+    # 1 * SquareLoss(mask=f.rmask),
+    1 * HuberLoss(mask=f.rmask),
+    1e5 * NegRegularizer(),
+    # 11.2 * DiffLoss(rgrid),           # = old 1e5; DiffLoss now /Δlog r, (3,25)x200
+    # 2.25 * DiffLoss(rgrid),           # radial smoothness (= old 2e4)
 ]
 
-# reconstruction loop
+open('/tmp/losses_storm.txt', 'w').close()
+# leading N dim → model emits (N, r, e, a): one independent reconstruction per date
+initcoeffs = t.zeros((N, *mr.coeffs_shape), **d)
+
 coeffs, retrieved_meas, losses = gd(
-    f, meas, recon_model, lr=5e0,
-    loss_fns=loss_fns, num_iterations=3000,
+    f, t.nan_to_num(meas), mr, lr=1e1,
+    loss_fns=loss_fns, num_iterations=1000,
+    coeffs=initcoeffs,
+    callbacks=[LogCallback('L0init', '/tmp/losses_storm.txt')],
 )
-retrieved = recon_model(coeffs)
+
+# FIXME: -----------------------------------------
+# FIXME: save results to pkl
+# FIXME: -----------------------------------------
+
+pklfile = Path(f'/tmp/L2_{desc}.pkl')
+pklfile.write_bytes(pickle.dumps({
+    'coeffs': coeffs, 'model': mr, 'grid': rgrid, 'rvg': rvg,
+    'meas': meas, 'ims': ims, 'dates': dates, 'losses': losses,
+}))
+print(f'Wrote L2 product to {pklfile}')
+
+# FIXME: -----------------------------------------
+# FIXME: load results from pkl
+# FIXME: -----------------------------------------
+
+l2 = pickle.loads(pklfile.read_bytes())
+
+coeffs, mr, rgrid, rvg = l2['coeffs'], l2['model'], l2['grid'], l2['rvg']
+meas, ims, dates, losses = l2['meas'], l2['ims'], l2['dates'], l2['losses']
+N = len(dates)
+
+retrieved = mr(coeffs)  # (N, r, e, a)
 
 # ----- Plotting -----
 # %% plot
 
-import matplotlib
-# accelerate plot generation when in non-interactive mode
-matplotlib.use('Agg')
-
+# each date is retrieved independently; figures below show the first one
 figures = [
     # primary figures
-    sphharmplot(recon_model.sph_coeffs(coeffs), recon_model),
-    # extra debugging figures
+    cardplot(retrieved[0], rgrid.static, method='nearest'),
+    cardplotaxes(retrieved[0], rgrid.static, method='nearest'),
+    sphharmplot(mr.sph_coeffs(coeffs)[0], mr),
     loss_plot(losses),
-    cardplot(retrieved.squeeze(), recon_model.grid, norm='log'),
-    cardplotaxes(retrieved.squeeze(), recon_model.grid, yscale='log'),
+    radiance_v_density(retrieved[0], rgrid, meas[0], [leaf[0] for leaf in rvg.leaves]),
 ]
 
-# FIXME: remove this section for production
+# FIXME: -----------------------------------------
+# FIXME: remove this section for production, which stops at the pkl above
+# FIXME: -----------------------------------------
 # ----- Save plots to disk -----
 
-from dominate_tags import *
-
-# figure settings
-figset = {'height': 200}
-result = caption(
-    f"recon={recon_model}",
-    # FIXME: remove for production, no access to ground truth
-    plot(carderr(retrieved.squeeze(), truth.squeeze(), recon_model.grid, sgrid), **figset),
-    plot(figures[0], **figset),
-    tags.br(),
-    tags.details(
-        tags.summary(),
-        plot(figures[1], **figset),
-        caption("Recon", plot(figures[2], **figset)),
-        caption("Truth", plot(cardplot(truth.squeeze(), sgrid, norm='log'), **figset)),
-        caption("Recon", plot(figures[3], **figset)),
-        caption("Truth", plot(cardplotaxes(truth.squeeze(), sgrid, yscale='log'), **figset)),
-    )
-)
-
-with open('/www/l1c_l2.html', 'w') as f:
-    f.write(result.render())
+outdir = Path(f'/www/storm/1D_{desc}_demo')
+outdir.mkdir(parents=True, exist_ok=True)
+for name, fig in zip(
+        ['cardplot', 'cardplotaxes', 'sphharmplot', 'lossplot', 'scibinradiance']
+        figures
+):
+    fig.savefig(outdir / f'{name}.png', bbox_inches='tight')
+print(f'Saved {len(figures)} figures to {outdir}')

@@ -35,7 +35,7 @@ datapath = Path('/data-products')
 
 desc = 'quiet'
 start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-end = np.datetime64('2026-05-15').astype('datetime64[ns]').astype(float)
+end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
 
 dates = np.linspace(start, end, num_obs:=14).astype('datetime64[ns]')
 
@@ -117,7 +117,7 @@ initcoeffs.data[0:1, :], _, _ = gd(
 loss_fns = [
     1 * HuberLoss(mask=f.rmask),
     1e5 * NegRegularizer(),
-    # 5e4 * DiffLoss(rgrid),
+    # 11.2 * DiffLoss(rgrid),        # = old 5e4; DiffLoss now /Δlog r, (3,60)x200
     # 1e2 * SphHarmL1Regularizer(mrinit, weights=W),
     # 1e3 * SphHarmL1Regularizer(mrinit),
     # 1e4 * AnchorRegularizer(initcoeffs),
