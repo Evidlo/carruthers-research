@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """L1C -> L2 demo: 1D retrieval, dumped to a pkl, replotted from the pkl alone.
 
+Simultaneous (independent) reconstruction of a set of images
 """
 
 from glide.science.forward_sph import *
@@ -38,40 +39,27 @@ d = {'device': 'cuda'}
 
 datapath = Path('/data-products')
 
-# desc = 'january_wfi_newgrid'
-# start = np.datetime64('2026-01-19').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-01-21').astype('datetime64[ns]').astype(float)
-# desc = 'march_quiet_wfi_newgrid'
-# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-03-15').astype('datetime64[ns]').astype(float)
-desc = 'march_storm_wfi_analytic_builtin'
+desc = 'march_storm_wfi_analytic'
 start = np.datetime64('2026-03-20').astype('datetime64[ns]').astype(float)
 end = np.datetime64('2026-03-22').astype('datetime64[ns]').astype(float)
-# desc = 'march_complete_wfi_newgrid'
-# start = np.datetime64('2026-03-01').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-04-01').astype('datetime64[ns]').astype(float)
-# desc = 'march_8_wfi_newgrid'
-# start = np.datetime64('2026-03-08').astype('datetime64[ns]').astype(float)
-# end = np.datetime64('2026-03-09').astype('datetime64[ns]').astype(float)
 
-dates = np.linspace(start, end, num_obs:=50).astype('datetime64[ns]')
+time = np.linspace(start, end, num_obs:=50).astype('datetime64[ns]')
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent / 'recon'))
 from load import load
-nfi, wfi, dates = load(datapath, dates)
+nfi, wfi, time = load(datapath, time)
+nfi_scraft = list(nfi.scraft.values)
+wfi_scraft = list(wfi.scraft.values)
 
-# per-camera lists.  ims is (date, camera) pairs, mirroring the leading axes of
-# the zipped rvg below
-scraft = [
-    # nfi.scraft.values,
-    wfi.scraft.values,
-]
+# ims should be pairs of images
 ims = list(zip(
     # nfi.images.values,
-    wfi.images.values
+    wfi.images.values,
 ))
 
+# timestamped xr Dataset of albedos (expects 'time' and 'albedo' variables)
+# ForwardSph will resample to its spatiotemporal grid
 albedo_data = xr.open_mfdataset(
     '/home/jackson/glide-sdc/glide/validation/radiative_transfer/pipeline_test/albedo_data_*.nc'
 )
@@ -83,22 +71,23 @@ solar_flux = 11e11
 
 # %% forward model
 
-N = len(dates)
+# choose times for each NFI/WFI image pair
+time = [s.date.datetime64 for s in wfi_scraft]
 
-# leading N axis puts the operator in dynamic mode, so each density slice maps
-# to one date's NFI+WFI pair instead of broadcasting across all views. Model and
-# plotting read only the spatial dims
+
+# dynamic grid.  one time datetime per image pair (used to select nearest albedo)
 rgrid = DefaultGrid(
-    (N, 200, 45, 60), size_r=(3, 25), spacing='log',
-    t=dates, timeunit='ns'
+    (len(time), 200, 45, 60), size_r=(3, 25), spacing='log',
+    t=time, timeunit='ns'
 )
 
-# zip the cameras onto a new axis.  masklim pins the fitted pixels to the grid
-# extent; the analytic tail (ForwardSph tail_slope) supplies signal beyond it
-rvg = ZippedGeom(*[
-    sum([ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in cam])
-    for cam in scraft
-])
+# take stacks of view geometries and zip them together by date
+rvg = ZippedGeom(
+    # sum(ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in nfi_scraft),
+    sum(ScienceGeomFast(s, (100, 50), masklim=rgrid.size.r, **d) for s in wfi_scraft),
+)
+
+# %% foo
 
 ralbedo=Albedo(albedo_data, rgrid, **d)
 f = ForwardSph(
@@ -133,8 +122,8 @@ loss_fns = [
 ]
 
 open('/tmp/losses_storm.txt', 'w').close()
-# leading N dim → model emits (N, r, e, a): one independent reconstruction per date
-initcoeffs = t.zeros((N, *mr.coeffs_shape), **d)
+# leading date dim → model emits (N, r, e, a): one independent reconstruction per date
+initcoeffs = t.zeros((len(ims), *mr.coeffs_shape), **d)
 
 coeffs, retrieved_meas, losses = gd(
     f, t.nan_to_num(meas), mr, lr=1e1,
@@ -147,10 +136,10 @@ coeffs, retrieved_meas, losses = gd(
 # FIXME: save results to pkl
 # FIXME: -----------------------------------------
 
-pklfile = Path(f'/tmp/L2_{desc}.pkl')
+pklfile = Path(f'/tmp/L2_demo.pkl')
 pklfile.write_bytes(pickle.dumps({
     'coeffs': coeffs, 'model': mr, 'grid': rgrid, 'rvg': rvg,
-    'meas': meas, 'ims': ims, 'dates': dates, 'losses': losses,
+    'meas': meas, 'ims': ims, 'time': time, 'losses': losses,
 }))
 print(f'Wrote L2 product to {pklfile}')
 
@@ -161,22 +150,23 @@ print(f'Wrote L2 product to {pklfile}')
 l2 = pickle.loads(pklfile.read_bytes())
 
 coeffs, mr, rgrid, rvg = l2['coeffs'], l2['model'], l2['grid'], l2['rvg']
-meas, ims, dates, losses = l2['meas'], l2['ims'], l2['dates'], l2['losses']
-N = len(dates)
+meas, ims, time, losses = l2['meas'], l2['ims'], l2['time'], l2['losses']
 
 retrieved = mr(coeffs)  # (N, r, e, a)
 
 # ----- Plotting -----
 # %% plot
 
-# each date is retrieved independently; figures below show the first one
+# each date is retrieved independently; figures below show the first date, and
+# for the binned radiance the first camera
 figures = [
     # primary figures
     cardplot(retrieved[0], rgrid.static, method='nearest'),
     cardplotaxes(retrieved[0], rgrid.static, method='nearest'),
     sphharmplot(mr.sph_coeffs(coeffs)[0], mr),
     loss_plot(losses),
-    radiance_v_density(retrieved[0], rgrid, meas[0], [leaf[0] for leaf in rvg.leaves]),
+    image_stack(meas[0][0], rvg.leaves[0][0], colorbar=True,
+                title='Binned column density (atom·Re/cm³)'),
 ]
 
 # FIXME: -----------------------------------------
@@ -187,7 +177,7 @@ figures = [
 outdir = Path(f'/www/storm/1D_{desc}_demo')
 outdir.mkdir(parents=True, exist_ok=True)
 for name, fig in zip(
-        ['cardplot', 'cardplotaxes', 'sphharmplot', 'lossplot', 'scibinradiance']
+        ['cardplot', 'cardplotaxes', 'sphharmplot', 'lossplot', 'scibinradiance'],
         figures
 ):
     fig.savefig(outdir / f'{name}.png', bbox_inches='tight')
